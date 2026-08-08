@@ -22,7 +22,9 @@ public class DocxWatermarkServiceTests : IDisposable
 
         using var doc = WordprocessingDocument.Open(_path, isEditable: false);
         var headerPart = doc.MainDocumentPart!.HeaderParts.Single();
-        var textPath = headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.TextPath>().Single();
+        // The watermark shapetype boilerplate also contains a (contentless) TextPath, so find the
+        // one that actually carries the watermark's text rather than assuming there's only one.
+        var textPath = headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.TextPath>().Single(t => t.String is not null);
 
         Assert.Equal("DRAFT", textPath.String?.Value);
     }
@@ -50,7 +52,8 @@ public class DocxWatermarkServiceTests : IDisposable
 
         Assert.Single(sectPr.Elements<HeaderReference>());
         var headerPart = (HeaderPart)doc.MainDocumentPart!.GetPartById(sectPr.Elements<HeaderReference>().Single().Id!);
-        Assert.Equal("CONFIDENTIAL", headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.TextPath>().Single().String?.Value);
+        var textPath = headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.TextPath>().Single(t => t.String is not null);
+        Assert.Equal("CONFIDENTIAL", textPath.String?.Value);
     }
 
     public void Dispose() => File.Delete(_path);
