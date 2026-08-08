@@ -14,6 +14,16 @@
     <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="PDFtoImage" Version="5.3.0" />
     <PackageReference Include="SkiaSharp" Version="4.151.1" />
+    <!--
+      Clippit transitively pins an older SkiaSharp.NativeAssets.Linux.NoDependencies (4.148.0),
+      which is ABI-incompatible with the managed SkiaSharp 4.151.1 above (native ranges
+      [151.0, 152.0) required, 4.148.0 reports as 150.0) — breaks PDF rendering on Linux only.
+      Pin the native asset packages explicitly to the same version so managed/native stay in sync
+      on every platform this runs on (Windows dev, Linux containers/CI).
+    -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="4.151.1" />
   </ItemGroup>
 
   <ItemGroup>
