@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "DocumentProcessor.Demo": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOCPROC_LIBREOFFICE_WSL_DISTRO": "Ubuntu"
+      }
+    }
+  }
+}

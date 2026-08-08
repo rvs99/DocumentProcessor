@@ -57,6 +57,14 @@ Then set `DOCPROC_LIBREOFFICE_WSL_DISTRO=Ubuntu` before running tests/the demo, 
 conversions through `wsl.exe -d Ubuntu -- soffice ...` instead of a native executable
 (see `WordToPdfConversionOptions.UseWslDistro`).
 
+`src/DocumentProcessor.Demo/Properties/launchSettings.json` already sets this for you when running
+via `dotnet run` or an IDE debug session (F5) — those launch a fresh process that does **not**
+inherit environment variables set in your terminal, so without it the demo falls back to looking
+for a native `soffice.exe` and skips the PDF steps. If your WSL distro isn't named `Ubuntu`, update
+the value there — `dotnet run` applies the launch profile's environment variables on top of your
+shell's, so editing that file is the reliable way to change it (a `$env:` override in your terminal
+before `dotnet run` will *not* take effect, since the profile value wins).
+
 ## Running
 
 ```powershell
