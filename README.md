@@ -93,5 +93,16 @@ PDF-dependent steps are skipped with a clear message rather than failing the who
 - **Track changes accept/reject** covers run-level insertions/deletions (`w:ins`/`w:del`), which is
   the large majority of real-world tracked changes. Paragraph-mark and formatting-change revisions
   (`pPrChange`/`rPrChange`) are left as-is.
+- **Docx watermarks** support two modes via `DocxWatermarkService.AddTextWatermark(..., removable:)`.
+  Word's Design → Watermark UI (both "Remove Watermark" and the predefined gallery's
+  replace-existing behavior) identifies a watermark purely by its shape id matching
+  `PowerPlusWaterMarkObject<digits>` — not by appearance or position. `removable: true` (the
+  default) uses that id, so end users can clear the watermark themselves through Word's own UI.
+  `removable: false` uses a different id on purpose, so Word's Watermark commands don't recognize
+  or manage it — appropriate for a disclaimer that shouldn't be a single click away from
+  disappearing. (PDF watermarks don't currently offer an equivalent: PDFsharp's public API doesn't
+  expose a way to attach a custom-appearance object that's cleanly one-click-removable in a viewer —
+  the closest built-in mechanism, `PdfRubberStampAnnotation`, is restricted to a fixed set of 14
+  standard PDF stamp names rendered in Acrobat's own style, not arbitrary custom text/rotation.)
 - Third-party licenses (including a bundled OFL-licensed font) are in
   [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

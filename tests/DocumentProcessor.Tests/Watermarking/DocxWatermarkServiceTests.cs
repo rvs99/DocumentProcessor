@@ -56,5 +56,34 @@ public class DocxWatermarkServiceTests : IDisposable
         Assert.Equal("CONFIDENTIAL", textPath.String?.Value);
     }
 
+    [Fact]
+    public void AddTextWatermark_defaults_to_removable_matching_words_own_naming_convention()
+    {
+        // Word's Design -> Watermark UI (both "Remove Watermark" and the predefined gallery's
+        // replace-existing behavior) identifies a watermark purely by this id prefix on the shape,
+        // not by its appearance or position. Without it, "Remove Watermark" silently does nothing,
+        // and picking a predefined watermark adds a second shape instead of replacing this one.
+        _sut.AddTextWatermark(_path, "DRAFT");
+
+        var shape = GetWatermarkShape(_path);
+        Assert.StartsWith("PowerPlusWaterMarkObject", shape.Id?.Value);
+    }
+
+    [Fact]
+    public void AddTextWatermark_with_removable_false_uses_an_id_word_does_not_recognize_as_a_watermark()
+    {
+        _sut.AddTextWatermark(_path, "CONFIDENTIAL", removable: false);
+
+        var shape = GetWatermarkShape(_path);
+        Assert.DoesNotContain("PowerPlusWaterMarkObject", shape.Id?.Value);
+    }
+
+    private static DocumentFormat.OpenXml.Vml.Shape GetWatermarkShape(string path)
+    {
+        using var doc = WordprocessingDocument.Open(path, isEditable: false);
+        var headerPart = doc.MainDocumentPart!.HeaderParts.Single();
+        return headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.Shape>().Single();
+    }
+
     public void Dispose() => File.Delete(_path);
 }

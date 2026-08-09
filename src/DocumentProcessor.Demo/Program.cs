@@ -172,13 +172,24 @@ transplantService.TransplantParagraphs(
 Step("Copied the \"Governing Law\" clause from the clause library as-is, preserving its formatting");
 
 // ---------------------------------------------------------------------------------------------
-Section("6. Mark the draft with a watermark — docx watermarking");
+Section("6. Mark the draft with a watermark — docx watermarking (removable and locked modes)");
 // ---------------------------------------------------------------------------------------------
 
-var watermarkedDraftPath = Out("02-contract-draft-watermarked.docx");
+var docxWatermarkService = new DocxWatermarkService();
+
+// removable: true (the default) matches Word's own naming convention, so end users can clear it
+// themselves via Design -> Watermark -> Remove Watermark once the document is finalized.
+var watermarkedDraftPath = Out("02-contract-draft-watermarked-removable.docx");
 File.Copy(contractPath, watermarkedDraftPath, overwrite: true);
-new DocxWatermarkService().AddTextWatermark(watermarkedDraftPath, "DRAFT");
-Step($"Wrote {Path.GetFileName(watermarkedDraftPath)} with a diagonal \"DRAFT\" watermark on every page");
+docxWatermarkService.AddTextWatermark(watermarkedDraftPath, "DRAFT", removable: true);
+Step($"Wrote {Path.GetFileName(watermarkedDraftPath)} — \"DRAFT\" watermark, removable via Word's own UI");
+
+// removable: false uses a shape id Word's Watermark UI doesn't recognize, so Remove Watermark
+// can't touch it — appropriate for a disclaimer that shouldn't be a click away from disappearing.
+var lockedWatermarkPath = Out("02b-contract-draft-watermarked-locked.docx");
+File.Copy(contractPath, lockedWatermarkPath, overwrite: true);
+docxWatermarkService.AddTextWatermark(lockedWatermarkPath, "CONFIDENTIAL — NOT FOR DISTRIBUTION", removable: false);
+Step($"Wrote {Path.GetFileName(lockedWatermarkPath)} — locked watermark, Word's Remove Watermark can't clear it");
 
 // ---------------------------------------------------------------------------------------------
 Section("7. Negotiation: counterparty proposes changes — simulated via tracked changes");
