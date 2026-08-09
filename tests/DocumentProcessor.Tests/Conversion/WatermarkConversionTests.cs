@@ -6,22 +6,21 @@ using UglyToad.PdfPig;
 namespace DocumentProcessor.Tests.Conversion;
 
 /// <summary>
-/// Documents a known LibreOffice limitation, found while investigating why a docx watermark
-/// wasn't showing up after PDF conversion: converting a .docx watermarked via
-/// <see cref="DocxWatermarkService"/> to PDF through <see cref="WordToPdfConverter"/> (LibreOffice
-/// headless) does not carry the watermark through. LibreOffice silently drops the watermark's VML
-/// "_x0000_t136" WordArt shapetype-based shape during conversion instead of erroring — confirmed
-/// independent of the watermark's text content (tested with "DRAFT" and with a longer string
-/// containing an em dash), removable/locked mode, and rotation.
+/// Regression test for a LibreOffice VML limitation found while investigating why a docx watermark
+/// wasn't showing up after PDF conversion: LibreOffice's VML importer does not support
+/// <c>v:textpath</c> (Word's WordArt curve-fit text mechanism) at all — confirmed via a systematic
+/// diagnostic sweep independent of the shape's size, position, rotation, z-index, and whether it's
+/// in the header or body. <c>v:textbox</c> (a normal text box holding regular WordprocessingML
+/// paragraph content) is supported by both Word and LibreOffice, which is why
+/// <see cref="DocxWatermarkService"/> builds the watermark shape that way instead of using Word's
+/// own textpath-based watermark generator output.
 ///
-/// This is scoped specifically to the docx-watermark -> LibreOffice-conversion path: the watermark
-/// renders correctly in real MS Word (see DocxWatermarkServiceTests), and PdfWatermarkService's PDF
-/// watermarks render correctly too, since that service draws directly onto an already-converted PDF
-/// and never touches LibreOffice's VML import.
-///
-/// If LibreOffice ever adds full support for this VML shapetype, the assertion below will start
-/// failing — that's the point: treat a failure here as "go update this test to assert the watermark
-/// IS present now," not as a regression in our own code.
+/// Note what this test does NOT claim: the watermark surviving conversion here is real
+/// WordprocessingML text, which LibreOffice's PDF export renders as genuine selectable/extractable
+/// PDF text — fine for a docx you're only ever going to open in Word, but not what you want for a
+/// PDF a reader could select and delete. For a non-selectable PDF watermark, see
+/// <see cref="WatermarkPipelineTests"/>, which strips the watermark before conversion and reapplies
+/// it via <see cref="Watermarking.PdfWatermarkService"/> (rasterized) afterwards instead.
 /// </summary>
 public class WatermarkConversionTests : IDisposable
 {
@@ -35,7 +34,7 @@ public class WatermarkConversionTests : IDisposable
     }
 
     [Fact]
-    public async Task Converting_a_watermarked_docx_via_LibreOffice_currently_drops_the_watermark_but_keeps_body_text()
+    public async Task Converting_a_watermarked_docx_via_LibreOffice_preserves_both_the_watermark_and_body_text()
     {
         await new WordToPdfConverter(TestFiles.ConversionOptions()).ConvertAsync(_docxPath, _pdfPath);
 
@@ -43,10 +42,7 @@ public class WatermarkConversionTests : IDisposable
         var text = doc.GetPage(1).Text;
 
         Assert.Contains("Body text that should survive conversion", text);
-
-        // KNOWN LIMITATION (see class remarks) — not desired behavior. Confirms the watermark shape
-        // itself, not just its text styling, is what LibreOffice is dropping.
-        Assert.DoesNotContain("DRAFT", text);
+        Assert.Contains("DRAFT", text);
     }
 
     public void Dispose()

@@ -207,33 +207,41 @@ File.Copy(contractPath, lockedWatermarkPath, overwrite: true);
 docxWatermarkService.AddTextWatermark(lockedWatermarkPath, "DRAFT", removable: false);
 Step($"Wrote {Path.GetFileName(lockedWatermarkPath)} — locked watermark, Word's Remove Watermark can't clear it");
 
-// Converting these two through LibreOffice surfaces a known limitation: it doesn't render this VML
-// watermark shape at all during docx -> PDF conversion (silently dropped, not an error) — confirmed
-// independent of watermark text, removable/locked mode, and rotation. The watermark is correct in
-// real MS Word (that's what Word's Watermark UI, and DocxWatermarkServiceTests, verify), and
-// PdfWatermarkService's PDF watermarks (step 12) are unaffected, since that service draws directly
-// onto an already-converted PDF instead of relying on LibreOffice's VML import. See
-// WatermarkConversionTests.cs for the permanent regression test behind this check.
+// Converting a watermarked docx straight through LibreOffice would carry the watermark over as
+// real, selectable PDF text (v:textbox is genuine WordprocessingML content) — fine for a docx
+// that only ever opens in Word, but not what a distributed PDF should do. The production pattern
+// is strip -> convert -> reapply: remove the watermark before conversion, convert the clean docx,
+// then apply PdfWatermarkService (which rasterizes) to the result. See WatermarkPipelineTests.cs.
+async Task<string> ConvertWithNonSelectableWatermark(string watermarkedDocxPath, string watermarkText, string outputBaseName)
+{
+    var strippedCopyPath = Out($"~stripped-{outputBaseName}.docx");
+    File.Copy(watermarkedDocxPath, strippedCopyPath, overwrite: true);
+    docxWatermarkService.RemoveWatermark(strippedCopyPath);
+
+    var cleanPdfPath = Out($"~clean-{outputBaseName}.pdf");
+    await converter.ConvertAsync(strippedCopyPath, cleanPdfPath);
+
+    var finalPdfPath = Out($"{outputBaseName}.pdf");
+    new PdfWatermarkService().AddTextWatermark(cleanPdfPath, finalPdfPath, watermarkText);
+
+    File.Delete(strippedCopyPath);
+    File.Delete(cleanPdfPath);
+    return finalPdfPath;
+}
+
 try
 {
-    var removableWatermarkedPdfPath = Out("02-contract-draft-watermarked-removable.pdf");
-    var lockedWatermarkedPdfPath = Out("02b-contract-draft-watermarked-locked.pdf");
-    await converter.ConvertAsync(watermarkedDraftPath, removableWatermarkedPdfPath);
-    await converter.ConvertAsync(lockedWatermarkPath, lockedWatermarkedPdfPath);
+    var removablePdfPath = await ConvertWithNonSelectableWatermark(watermarkedDraftPath, "DRAFT", "02-contract-draft-watermarked-removable");
+    var lockedPdfPath = await ConvertWithNonSelectableWatermark(lockedWatermarkPath, "DRAFT", "02b-contract-draft-watermarked-locked");
 
-    var removableSurvived = PdfContainsText(removableWatermarkedPdfPath, "DRAFT");
-    var lockedSurvived = PdfContainsText(lockedWatermarkedPdfPath, "DRAFT");
-    Step($"Converted both to PDF via LibreOffice — watermark survived conversion: removable={removableSurvived}, locked={lockedSurvived}");
-    if (!removableSurvived || !lockedSurvived)
-    {
-        Step("KNOWN LIMITATION: LibreOffice doesn't render this watermark's VML shapetype, so it's");
-        Step("silently dropped during docx -> PDF conversion. Renders correctly in real MS Word;");
-        Step("unrelated to PdfWatermarkService's PDF watermarks in step 12, which don't go through LibreOffice.");
-    }
+    var removableStillSelectable = PdfContainsText(removablePdfPath, "DRAFT");
+    var lockedStillSelectable = PdfContainsText(lockedPdfPath, "DRAFT");
+    Step("Converted both via strip -> convert -> reapply (LibreOffice + PdfWatermarkService)");
+    Step($"Watermark text NOT selectable in PDF: removable={!removableStillSelectable}, locked={!lockedStillSelectable}");
 }
 catch (Exception ex)
 {
-    Step("SKIPPED watermark-conversion check — LibreOffice not available in this environment.");
+    Step("SKIPPED watermark PDF pipeline — LibreOffice not available in this environment.");
     Step($"  ({ex.GetType().Name}: {ex.Message})");
 }
 

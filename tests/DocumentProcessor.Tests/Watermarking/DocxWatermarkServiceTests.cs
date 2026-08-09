@@ -22,11 +22,9 @@ public class DocxWatermarkServiceTests : IDisposable
 
         using var doc = WordprocessingDocument.Open(_path, isEditable: false);
         var headerPart = doc.MainDocumentPart!.HeaderParts.Single();
-        // The watermark shapetype boilerplate also contains a (contentless) TextPath, so find the
-        // one that actually carries the watermark's text rather than assuming there's only one.
-        var textPath = headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.TextPath>().Single(t => t.String is not null);
+        var textBox = headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.TextBox>().Single();
 
-        Assert.Equal("DRAFT", textPath.String?.Value);
+        Assert.Equal("DRAFT", textBox.InnerText);
     }
 
     [Fact]
@@ -52,8 +50,8 @@ public class DocxWatermarkServiceTests : IDisposable
 
         Assert.Single(sectPr.Elements<HeaderReference>());
         var headerPart = (HeaderPart)doc.MainDocumentPart!.GetPartById(sectPr.Elements<HeaderReference>().Single().Id!);
-        var textPath = headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.TextPath>().Single(t => t.String is not null);
-        Assert.Equal("CONFIDENTIAL", textPath.String?.Value);
+        var textBox = headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.TextBox>().Single();
+        Assert.Equal("CONFIDENTIAL", textBox.InnerText);
     }
 
     [Fact]
@@ -76,6 +74,43 @@ public class DocxWatermarkServiceTests : IDisposable
 
         var shape = GetWatermarkShape(_path);
         Assert.DoesNotContain("PowerPlusWaterMarkObject", shape.Id?.Value);
+    }
+
+    [Fact]
+    public void RemoveWatermark_removes_a_removable_watermark_and_reports_it_removed_something()
+    {
+        _sut.AddTextWatermark(_path, "DRAFT", removable: true);
+
+        var removed = _sut.RemoveWatermark(_path);
+
+        Assert.True(removed);
+        using var doc = WordprocessingDocument.Open(_path, isEditable: false);
+        var headerPart = doc.MainDocumentPart!.HeaderParts.Single();
+        Assert.Empty(headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.Shape>());
+    }
+
+    [Fact]
+    public void RemoveWatermark_also_removes_a_locked_watermark()
+    {
+        // "Irrespective of type" — RemoveWatermark shouldn't just handle the Word-recognized
+        // (removable) case; a locked watermark's whole point is that Word's own UI can't clear it,
+        // not that our own code can't.
+        _sut.AddTextWatermark(_path, "CONFIDENTIAL", removable: false);
+
+        var removed = _sut.RemoveWatermark(_path);
+
+        Assert.True(removed);
+        using var doc = WordprocessingDocument.Open(_path, isEditable: false);
+        var headerPart = doc.MainDocumentPart!.HeaderParts.Single();
+        Assert.Empty(headerPart.Header!.Descendants<DocumentFormat.OpenXml.Vml.Shape>());
+    }
+
+    [Fact]
+    public void RemoveWatermark_on_a_document_with_no_watermark_reports_nothing_removed_and_does_not_throw()
+    {
+        var removed = _sut.RemoveWatermark(_path);
+
+        Assert.False(removed);
     }
 
     private static DocumentFormat.OpenXml.Vml.Shape GetWatermarkShape(string path)

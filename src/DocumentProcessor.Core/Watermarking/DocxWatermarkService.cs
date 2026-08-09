@@ -1,25 +1,33 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Vml;
-using DocumentFormat.OpenXml.Vml.Office;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Picture = DocumentFormat.OpenXml.Wordprocessing.Picture;
-using VmlLock = DocumentFormat.OpenXml.Vml.Office.Lock;
-using VmlPath = DocumentFormat.OpenXml.Vml.Path;
 
 namespace DocumentProcessor.Core.Watermarking;
 
 /// <summary>
-/// Adds a diagonal text watermark (e.g. "DRAFT", "CONFIDENTIAL") to a .docx file, using the same
-/// VML shape-in-header mechanism Word itself generates for Insert → Watermark — including Word's
-/// own "_x0000_t136" WordArt shapetype, which is what lets the shape's fitshape behavior scale the
-/// text up to fill the watermark's bounding box. Without it, Word renders the text at its literal
-/// nominal size (1pt) instead of stretching it, which looks like the watermark is simply missing.
-/// Applied via the document header so it repeats on every page, matching Word's own behavior.
+/// Adds a diagonal text watermark (e.g. "DRAFT", "CONFIDENTIAL") to a .docx file, using a VML
+/// shape in the document header so it repeats on every page — the same mechanism Word itself uses
+/// for Insert → Watermark.
 /// </summary>
+/// <remarks>
+/// Uses a VML text box (<c>v:textbox</c> holding a normal WordprocessingML paragraph) rather than
+/// Word's own WordArt "text path" mechanism (<c>v:textpath</c> with <c>fitshape</c>, which is what
+/// Word's built-in watermark generator produces). Both render correctly in real Word, but
+/// LibreOffice's VML importer — used by <see cref="Conversion.WordToPdfConverter"/> — does not
+/// support <c>v:textpath</c> at all: it silently drops the shape during docx→PDF conversion,
+/// confirmed independent of the shape's size, position, rotation, or z-index.
+///
+/// If a document with a docx watermark needs to become a non-selectable-watermarked PDF, don't
+/// rely on converting the watermarked docx directly — even though <c>v:textbox</c> does survive
+/// LibreOffice's conversion (unlike <c>v:textpath</c>), it survives as real selectable PDF text,
+/// since that's what it fundamentally is. Use <see cref="RemoveWatermark"/> to strip the watermark
+/// before conversion, convert the clean docx, then apply
+/// <see cref="Watermarking.PdfWatermarkService"/> to the resulting PDF — that service rasterizes
+/// the watermark, which is what actually makes it non-selectable.
+/// </remarks>
 public sealed class DocxWatermarkService
 {
-    private const string WatermarkShapeTypeId = "_x0000_t136";
-
     /// <summary>
     /// Word's Design → Watermark UI (both "Remove Watermark" and the predefined gallery's
     /// replace-existing behavior) doesn't identify a watermark by its appearance or position — it
@@ -29,6 +37,9 @@ public sealed class DocxWatermarkService
     /// watermark won't replace it (Word just adds its own shape alongside, producing two).
     /// </summary>
     private const string RemovableShapeIdPrefix = "PowerPlusWaterMarkObject";
+
+    /// <summary>The shape id used for a non-removable (<c>removable: false</c>) watermark.</summary>
+    private const string LockedShapeId = "DocProcWatermark";
 
     /// <summary>
     /// Adds (or replaces) a text watermark on every section of the document. Safe to call more than
@@ -56,7 +67,7 @@ public sealed class DocxWatermarkService
         var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
         var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
 
-        var shapeId = removable ? $"{RemovableShapeIdPrefix}{Random.Shared.Next(10_000_000, 99_999_999)}" : "DocProcWatermark";
+        var shapeId = removable ? $"{RemovableShapeIdPrefix}{Random.Shared.Next(10_000_000, 99_999_999)}" : LockedShapeId;
 
         var headerPart = mainPart.AddNewPart<HeaderPart>();
         headerPart.Header = BuildWatermarkHeader(text, fontFamily, rotationDegrees, colorHex, shapeId);
@@ -84,72 +95,77 @@ public sealed class DocxWatermarkService
         document.Save();
     }
 
+    /// <summary>
+    /// Removes any watermark previously added by <see cref="AddTextWatermark"/> (removable or
+    /// locked), and any native watermark added via Word's own Insert → Watermark (which uses the
+    /// same <c>PowerPlusWaterMarkObject*</c> shape id convention this class matches). Identifies
+    /// watermark shapes by id rather than assuming a header contains nothing else, so unrelated
+    /// header content (e.g. a page number or logo sharing the same header) is left intact.
+    /// </summary>
+    /// <returns>True if a watermark shape was found and removed from at least one header.</returns>
+    public bool RemoveWatermark(string docxPath)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+
+        var removedAny = false;
+        foreach (var headerPart in mainPart.HeaderParts)
+        {
+            var header = headerPart.Header ?? throw new InvalidOperationException("Header part has no content.");
+
+            var watermarkRuns = header.Descendants<Shape>()
+                .Where(IsWatermarkShape)
+                .Select(shape => shape.Ancestors<Run>().FirstOrDefault())
+                .Where(run => run is not null)
+                .Distinct()
+                .ToList();
+
+            if (watermarkRuns.Count == 0)
+                continue;
+
+            foreach (var run in watermarkRuns)
+                run!.Remove();
+
+            header.Save();
+            removedAny = true;
+        }
+
+        return removedAny;
+    }
+
+    private static bool IsWatermarkShape(Shape shape) =>
+        shape.Id?.Value is { } id && (id.StartsWith(RemovableShapeIdPrefix, StringComparison.Ordinal) || id == LockedShapeId);
+
     private static Header BuildWatermarkHeader(string text, string fontFamily, int rotationDegrees, string colorHex, string shapeId)
     {
-        var shape = new Shape(
-            new TextPath
-            {
-                Style = $"font-family:'{fontFamily}';font-size:1pt",
-                String = text,
-                FitShape = true
-            },
-            new Fill { Opacity = "0.5" })
+        var textRun = new Run(
+            new RunProperties(
+                new RunFonts { Ascii = fontFamily, HighAnsi = fontFamily, ComplexScript = fontFamily },
+                new Color { Val = colorHex },
+                new FontSize { Val = "144" }), // half-points; 144 = 72pt
+            new Text(text));
+
+        var textParagraph = new Paragraph(
+            new ParagraphProperties(new Justification { Val = JustificationValues.Center }),
+            textRun);
+
+        var textBox = new TextBox(new TextBoxContent(textParagraph)) { Style = "mso-fit-shape-to-text:t" };
+
+        var shape = new Shape(textBox)
         {
             Id = shapeId,
-            Type = $"#{WatermarkShapeTypeId}",
             Style = "position:absolute;left:0;top:0;width:415pt;height:207.5pt;" +
                     $"rotation:{rotationDegrees};z-index:-251654144;" +
                     "mso-position-horizontal:center;mso-position-horizontal-relative:margin;" +
                     "mso-position-vertical:center;mso-position-vertical-relative:margin",
             AllowInCell = false,
-            Filled = true,
-            FillColor = $"#{colorHex}",
+            Filled = false,
             Stroked = false
         };
 
-        // The run needs w:noProof (Word's convention for machine-generated graphical content) and
-        // the picture needs both the shapetype definition and the shape that references it.
-        var run = new Run(new RunProperties(new NoProof()), new Picture(BuildWatermarkShapetype(), shape));
+        // The run needs w:noProof — Word's convention for machine-generated graphical content.
+        var run = new Run(new RunProperties(new NoProof()), new Picture(shape));
         var paragraph = new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "Header" }), run);
         return new Header(paragraph);
     }
-
-    /// <summary>
-    /// Word's built-in "Text Plain" WordArt shapetype — stable, unchanged boilerplate present in
-    /// every native Word-generated watermark since Office 2003. Defines the outline path that
-    /// TextPath.FitShape stretches the watermark text into.
-    /// </summary>
-    private static Shapetype BuildWatermarkShapetype() =>
-        new(
-            new Formulas(
-                new Formula { Equation = "sum #0 0 10800" },
-                new Formula { Equation = "prod #0 2 1" },
-                new Formula { Equation = "sum 21600 0 @1" },
-                new Formula { Equation = "sum 0 0 @2" },
-                new Formula { Equation = "sum 21600 0 @3" },
-                new Formula { Equation = "if @0 @3 0" },
-                new Formula { Equation = "if @0 21600 @1" },
-                new Formula { Equation = "if @0 0 @2" },
-                new Formula { Equation = "if @0 @4 21600" },
-                new Formula { Equation = "mid @5 @6" },
-                new Formula { Equation = "mid @8 @5" },
-                new Formula { Equation = "mid @7 @8" },
-                new Formula { Equation = "mid @6 @7" },
-                new Formula { Equation = "sum @6 0 @5" }),
-            new VmlPath
-            {
-                AllowTextPath = true,
-                ConnectionPointType = ConnectValues.Custom,
-                ConnectionPoints = "@9,0;@10,10800;@11,21600;@12,10800",
-                ConnectAngles = "270,180,90,0"
-            },
-            new TextPath { On = true, FitShape = true },
-            new ShapeHandles(new ShapeHandle { Position = "#0,bottomRight", XRange = "0,21600" }),
-            new VmlLock { Extension = ExtensionHandlingBehaviorValues.Edit, TextLock = true, ShapeType = true })
-        {
-            Id = WatermarkShapeTypeId,
-            CoordinateSize = "1600,21600",
-            Adjustment = "10800",
-            EdgePath = "m@7,0l@8,0m@5,21600l@6,21600e"
-        };
 }
