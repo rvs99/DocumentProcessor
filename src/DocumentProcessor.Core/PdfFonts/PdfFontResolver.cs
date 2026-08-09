@@ -42,6 +42,13 @@ public sealed class PdfFontResolver : IFontResolver
     public byte[] GetFont(string faceName) =>
         _customFonts.TryGetValue(faceName, out var bytes) ? bytes : _defaultFontBytes.Value;
 
+    /// <summary>
+    /// Resolves font bytes for direct use outside PDFsharp (e.g. SkiaSharp text rasterization),
+    /// with the same registered-custom-font-or-bundled-default fallback as <see cref="GetFont"/>.
+    /// </summary>
+    public byte[] GetFontBytes(string? familyName) =>
+        familyName is not null && _customFonts.TryGetValue(familyName, out var bytes) ? bytes : _defaultFontBytes.Value;
+
     public FontResolverInfo ResolveTypeface(string familyName, bool isBold, bool isItalic)
     {
         var faceName = _customFonts.ContainsKey(familyName) ? familyName : DefaultFamilyName;

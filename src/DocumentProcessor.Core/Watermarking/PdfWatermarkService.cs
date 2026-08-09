@@ -1,14 +1,26 @@
 using DocumentProcessor.Core.PdfFonts;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf.IO;
+using SkiaSharp;
 
 namespace DocumentProcessor.Core.Watermarking;
 
 /// <summary>
 /// Stamps a large, semi-transparent diagonal text watermark onto every page of a PDF.
 /// </summary>
+/// <remarks>
+/// The watermark is rasterized to an image and drawn as a picture rather than drawn as PDF text.
+/// Text drawn directly onto a PDF page (e.g. via XGraphics.DrawString) becomes ordinary selectable/
+/// copyable page content — indistinguishable to a PDF viewer from the document's real text, so
+/// dragging a selection across the page picks up watermark characters along with it. Rasterizing
+/// avoids that entirely: pixels can't be text-selected. This is the standard approach production
+/// watermarking tools use. (Contrast with ESignFieldService's PDF anchors, which must stay real
+/// text on purpose — e-signature platforms detect them by scanning the page's text layer.)
+/// </remarks>
 public sealed class PdfWatermarkService
 {
+    private const float SupersampleScale = 2f;
+
     public void AddTextWatermark(
         string pdfPath,
         string outputPath,
@@ -18,24 +30,53 @@ public sealed class PdfWatermarkService
         byte grayLevel = 192,
         byte alpha = 100)
     {
-        PdfFontResolver.EnsureRegistered();
         using var document = PdfReader.Open(pdfPath, PdfDocumentOpenMode.Modify);
-
-        var font = new XFont(fontFamily, 72, XFontStyleEx.Bold);
-        var brush = new XSolidBrush(XColor.FromArgb(alpha, grayLevel, grayLevel, grayLevel));
-        var format = new XStringFormat { Alignment = XStringAlignment.Center, LineAlignment = XLineAlignment.Center };
+        var fontBytes = PdfFontResolver.Instance.GetFontBytes(fontFamily);
 
         foreach (var page in document.Pages)
         {
-            using var gfx = XGraphics.FromPdfPage(page);
-            var center = new XPoint(page.Width.Point / 2, page.Height.Point / 2);
+            var widthPt = page.Width.Point;
+            var heightPt = page.Height.Point;
 
-            var state = gfx.Save();
-            gfx.RotateAtTransform(rotationDegrees, center);
-            gfx.DrawString(text, font, brush, center, format);
-            gfx.Restore(state);
+            using var watermarkPng = RenderWatermarkPng(text, fontBytes, rotationDegrees, grayLevel, alpha, widthPt, heightPt);
+            using var image = XImage.FromStream(watermarkPng);
+
+            using var gfx = XGraphics.FromPdfPage(page);
+            gfx.DrawImage(image, 0, 0, widthPt, heightPt);
         }
 
         document.Save(outputPath);
+    }
+
+    private static MemoryStream RenderWatermarkPng(
+        string text, byte[] fontBytes, double rotationDegrees, byte grayLevel, byte alpha, double widthPt, double heightPt)
+    {
+        var widthPx = (int)(widthPt * SupersampleScale);
+        var heightPx = (int)(heightPt * SupersampleScale);
+
+        using var bitmap = new SKBitmap(widthPx, heightPx, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var canvas = new SKCanvas(bitmap);
+        canvas.Clear(SKColors.Transparent);
+
+        using var typefaceData = SKData.CreateCopy(fontBytes);
+        using var typeface = SKTypeface.FromData(typefaceData, 0) ?? SKTypeface.Default;
+        using var font = new SKFont(typeface, 72 * SupersampleScale);
+        using var paint = new SKPaint
+        {
+            Color = new SKColor(grayLevel, grayLevel, grayLevel, alpha),
+            IsAntialias = true
+        };
+
+        canvas.Translate(widthPx / 2f, heightPx / 2f);
+        canvas.RotateDegrees((float)rotationDegrees);
+        canvas.DrawText(text, 0, 0, SKTextAlign.Center, font, paint);
+        canvas.Flush();
+
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, quality: 100);
+        var stream = new MemoryStream();
+        data.SaveTo(stream);
+        stream.Position = 0;
+        return stream;
     }
 }
