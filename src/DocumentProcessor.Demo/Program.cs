@@ -10,6 +10,7 @@ using DocumentProcessor.Core.Tables;
 using DocumentProcessor.Core.TrackChanges;
 using DocumentProcessor.Core.Transplant;
 using DocumentProcessor.Core.Watermarking;
+using UglyToad.PdfPig;
 
 // Walks through a single contract's lifecycle end to end, exercising every capability of the
 // module in the order a real document-processing pipeline would use them: draft → populate →
@@ -32,8 +33,23 @@ void Section(string title)
 
 void Step(string description) => Console.WriteLine($"  -> {description}");
 
+bool PdfContainsText(string pdfPath, string text)
+{
+    using var doc = PdfDocument.Open(pdfPath);
+    return Enumerable.Range(1, doc.NumberOfPages).Any(i => doc.GetPage(i).Text.Contains(text));
+}
+
 Console.WriteLine("DocumentProcessor demo — running full document lifecycle.");
 Console.WriteLine($"Output directory: {outputDir}");
+
+// Set up once, used both for the LibreOffice-rendering check in step 6 and the real conversion in
+// step 11. Set DOCPROC_LIBREOFFICE_WSL_DISTRO=Ubuntu to route through WSL for local Windows dev
+// (see Properties/launchSettings.json) instead of a native soffice binary.
+var wslDistro = Environment.GetEnvironmentVariable("DOCPROC_LIBREOFFICE_WSL_DISTRO");
+var converterOptions = wslDistro is not null
+    ? new WordToPdfConversionOptions { UseWslDistro = wslDistro }
+    : new WordToPdfConversionOptions();
+var converter = new WordToPdfConverter(converterOptions);
 
 // ---------------------------------------------------------------------------------------------
 Section("1. Draft the contract, with content controls as fill-in fields");
@@ -191,6 +207,36 @@ File.Copy(contractPath, lockedWatermarkPath, overwrite: true);
 docxWatermarkService.AddTextWatermark(lockedWatermarkPath, "DRAFT", removable: false);
 Step($"Wrote {Path.GetFileName(lockedWatermarkPath)} — locked watermark, Word's Remove Watermark can't clear it");
 
+// Converting these two through LibreOffice surfaces a known limitation: it doesn't render this VML
+// watermark shape at all during docx -> PDF conversion (silently dropped, not an error) — confirmed
+// independent of watermark text, removable/locked mode, and rotation. The watermark is correct in
+// real MS Word (that's what Word's Watermark UI, and DocxWatermarkServiceTests, verify), and
+// PdfWatermarkService's PDF watermarks (step 12) are unaffected, since that service draws directly
+// onto an already-converted PDF instead of relying on LibreOffice's VML import. See
+// WatermarkConversionTests.cs for the permanent regression test behind this check.
+try
+{
+    var removableWatermarkedPdfPath = Out("02-contract-draft-watermarked-removable.pdf");
+    var lockedWatermarkedPdfPath = Out("02b-contract-draft-watermarked-locked.pdf");
+    await converter.ConvertAsync(watermarkedDraftPath, removableWatermarkedPdfPath);
+    await converter.ConvertAsync(lockedWatermarkPath, lockedWatermarkedPdfPath);
+
+    var removableSurvived = PdfContainsText(removableWatermarkedPdfPath, "DRAFT");
+    var lockedSurvived = PdfContainsText(lockedWatermarkedPdfPath, "DRAFT");
+    Step($"Converted both to PDF via LibreOffice — watermark survived conversion: removable={removableSurvived}, locked={lockedSurvived}");
+    if (!removableSurvived || !lockedSurvived)
+    {
+        Step("KNOWN LIMITATION: LibreOffice doesn't render this watermark's VML shapetype, so it's");
+        Step("silently dropped during docx -> PDF conversion. Renders correctly in real MS Word;");
+        Step("unrelated to PdfWatermarkService's PDF watermarks in step 12, which don't go through LibreOffice.");
+    }
+}
+catch (Exception ex)
+{
+    Step("SKIPPED watermark-conversion check — LibreOffice not available in this environment.");
+    Step($"  ({ex.GetType().Name}: {ex.Message})");
+}
+
 // ---------------------------------------------------------------------------------------------
 Section("7. Negotiation: counterparty proposes changes — simulated via tracked changes");
 // ---------------------------------------------------------------------------------------------
@@ -240,12 +286,6 @@ Step("Injected a \"/sig1/\" anchor tag — the convention DocuSign/Adobe Sign au
 // ---------------------------------------------------------------------------------------------
 Section("11. Convert the final contract to PDF for distribution — docx -> PDF conversion");
 // ---------------------------------------------------------------------------------------------
-
-var wslDistro = Environment.GetEnvironmentVariable("DOCPROC_LIBREOFFICE_WSL_DISTRO");
-var converterOptions = wslDistro is not null
-    ? new WordToPdfConversionOptions { UseWslDistro = wslDistro }
-    : new WordToPdfConversionOptions();
-var converter = new WordToPdfConverter(converterOptions);
 
 var finalPdfPath = Out("07-contract-final.pdf");
 var negotiatedPdfPath = Out("08-contract-negotiated-for-comparison.pdf");
