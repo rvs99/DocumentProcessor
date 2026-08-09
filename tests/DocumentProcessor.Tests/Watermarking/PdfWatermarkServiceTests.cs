@@ -1,5 +1,7 @@
+using System.Text;
 using DocumentProcessor.Core.Comparison;
 using DocumentProcessor.Core.Watermarking;
+using PdfSharp.Pdf.IO;
 using UglyToad.PdfPig;
 
 namespace DocumentProcessor.Tests.Watermarking;
@@ -41,6 +43,32 @@ public class PdfWatermarkServiceTests : IDisposable
         var visualDiff = new PdfComparisonService().CompareVisual(_pdfPath, _outputPath, differenceThresholdPercent: 0.0001);
         Assert.False(visualDiff.PagesMatch);
         Assert.True(visualDiff.PerPageDifferencePercent.Single() > 0);
+    }
+
+    [Fact]
+    public void AddTextWatermark_paints_the_watermark_before_the_page_text_so_text_renders_on_top()
+    {
+        // XGraphics.FromPdfPage defaults to Append (new drawing on top of existing content), which
+        // would paint the watermark over the real text instead of behind it. The fix passes
+        // XGraphicsPdfPageOptions.Prepend explicitly. Verify by reading the page's content stream(s)
+        // directly: PDF content streams execute — and therefore paint — in array order, so the
+        // watermark's image-drawing operator ("Do") must appear before the text-drawing operator
+        // ("BT", begin text) across the concatenated stream content.
+        _sut.AddTextWatermark(_pdfPath, _outputPath, "CONFIDENTIAL");
+
+        using var doc = PdfReader.Open(_outputPath, PdfDocumentOpenMode.Import);
+        var page = doc.Pages[0];
+        var combined = new StringBuilder();
+        for (var i = 0; i < page.Contents.Elements.Count; i++)
+            combined.Append(Encoding.Latin1.GetString(page.Contents.Elements.GetDictionary(i).Stream!.UnfilteredValue));
+
+        var content = combined.ToString();
+        var imageDrawIndex = content.IndexOf(" Do", StringComparison.Ordinal);
+        var textBeginIndex = content.IndexOf("BT", StringComparison.Ordinal);
+
+        Assert.True(imageDrawIndex >= 0, "Expected an image-drawing ('Do') operator in the page content.");
+        Assert.True(textBeginIndex >= 0, "Expected a text-drawing ('BT') operator in the page content.");
+        Assert.True(imageDrawIndex < textBeginIndex, "Watermark image must be painted before (behind) the page text.");
     }
 
     public void Dispose()

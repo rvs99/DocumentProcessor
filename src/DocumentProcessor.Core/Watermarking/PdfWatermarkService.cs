@@ -41,7 +41,11 @@ public sealed class PdfWatermarkService
             using var watermarkPng = RenderWatermarkPng(text, fontBytes, rotationDegrees, grayLevel, alpha, widthPt, heightPt);
             using var image = XImage.FromStream(watermarkPng);
 
-            using var gfx = XGraphics.FromPdfPage(page);
+            // Prepend, not the default Append: FromPdfPage's default draws new content on top of
+            // the page's existing content stream, which would paint the watermark over the real
+            // text instead of behind it. Prepend inserts our drawing before the existing content
+            // so the document's actual text renders on top of the watermark, as a watermark should.
+            using var gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Prepend);
             gfx.DrawImage(image, 0, 0, widthPt, heightPt);
         }
 

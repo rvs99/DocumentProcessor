@@ -60,6 +60,20 @@ public static class SampleDocumentFactory
         mainPart.Document.Save();
     }
 
+    /// <summary>Appends plain paragraphs to an existing document, before its final section properties.</summary>
+    public static void AppendParagraphs(string path, IEnumerable<string> paragraphs)
+    {
+        using var doc = WordprocessingDocument.Open(path, isEditable: true);
+        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var sectPr = body.Elements<SectionProperties>().FirstOrDefault();
+
+        foreach (var text in paragraphs)
+            body.InsertBefore(new Paragraph(new Run(new Text(text))), sectPr);
+
+        document.Save();
+    }
+
     public static void CreateDocumentWithTrackedChanges(string path, string author = "Reviewer")
     {
         using var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);

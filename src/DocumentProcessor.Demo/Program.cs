@@ -48,6 +48,54 @@ SampleDocumentFactory.CreateDocumentWithContentControls(contractPath, new Dictio
 });
 Step($"Created {Path.GetFileName(contractPath)} with 3 content controls");
 
+SampleDocumentFactory.AppendParagraphs(contractPath,
+[
+    "RECITALS",
+    "WHEREAS, the Client wishes to engage the Provider to design, build, and support a " +
+        "custom software platform in accordance with the specifications set out in this " +
+        "Agreement and its attached schedules; and",
+    "WHEREAS, the Provider represents that it has the necessary skill, experience, and " +
+        "resources to perform the services described herein in a professional and workmanlike " +
+        "manner consistent with prevailing industry standards; and",
+    "WHEREAS, the parties wish to set out the terms and conditions upon which the Provider " +
+        "will perform such services and the Client will pay for them;",
+    "NOW, THEREFORE, in consideration of the mutual covenants and agreements set forth in " +
+        "this Agreement, and for other good and valuable consideration, the receipt and " +
+        "sufficiency of which are hereby acknowledged, the parties agree as follows.",
+    "1. SCOPE OF SERVICES",
+    "The Provider shall perform the implementation, configuration, and support services " +
+        "described in Schedule A, together with any change orders subsequently agreed in " +
+        "writing by both parties. Services not expressly described in Schedule A are outside " +
+        "the scope of this Agreement and shall be subject to a separate written change order " +
+        "specifying the additional fees and any adjustment to the delivery schedule.",
+    "2. TERM AND TERMINATION",
+    "This Agreement commences on the Effective Date and continues for an initial term of " +
+        "twelve (12) months unless earlier terminated in accordance with this Section. Either " +
+        "party may terminate this Agreement for material breach upon thirty (30) days' written " +
+        "notice, provided the breaching party has not cured the breach within that period.",
+    "3. FEES AND PAYMENT",
+    "The Client shall pay the Provider the fees set out in Schedule A according to the " +
+        "invoicing schedule agreed by the parties. Invoices are payable within thirty (30) days " +
+        "of receipt. Amounts not paid when due shall accrue interest at the lesser of 1.5% per " +
+        "month or the maximum rate permitted by applicable law.",
+    "4. LIMITATION OF LIABILITY",
+    "Except for breaches of the confidentiality obligations in this Agreement, in no event " +
+        "shall either party's aggregate liability arising out of or related to this Agreement " +
+        "exceed the total fees paid or payable by the Client under this Agreement in the twelve " +
+        "(12) months preceding the event giving rise to the claim. Neither party shall be liable " +
+        "for any indirect, incidental, special, or consequential damages, including lost " +
+        "profits or lost data, even if advised of the possibility of such damages.",
+    "5. INTELLECTUAL PROPERTY",
+    "Except as expressly set out in this Agreement, each party retains all right, title, and " +
+        "interest in and to its own pre-existing intellectual property. Deliverables created " +
+        "specifically for the Client under this Agreement and paid for in full shall be owned " +
+        "by the Client upon final payment, excluding the Provider's underlying tools, " +
+        "frameworks, and methodologies, which the Provider may continue to use and license " +
+        "to other clients."
+]);
+Step("Appended recitals and numbered sections (Scope, Term, Fees) — enough body content to");
+Step("visibly overlap the watermark once one is applied, rather than a single sparse page");
+
 // ---------------------------------------------------------------------------------------------
 Section("2. Populate the content controls — content control replacement");
 // ---------------------------------------------------------------------------------------------
@@ -73,7 +121,10 @@ tableService.AppendTable(contractPath, new TableSpec(
     [
         ["Implementation Services", "1", "$150,000", "$150,000"],
         ["Annual Support (Year 1)", "1", "$75,000", "$75,000"],
-        ["Training", "5", "$5,000", "$25,000"]
+        ["Data Migration", "1", "$20,000", "$20,000"],
+        ["Integration Testing", "1", "$15,000", "$15,000"],
+        ["Training", "5", "$5,000", "$25,000"],
+        ["Project Management", "1", "$15,000", "$15,000"]
     ],
     Caption: "Schedule A — Pricing"));
 Step("Appended a 4-column pricing table with caption \"Schedule A — Pricing\"");
@@ -98,11 +149,16 @@ SampleDocumentFactory.CreateBasicDocument(clauseLibraryPath, "Master Clause Libr
 [
     "Confidentiality: Each party agrees to keep the other's proprietary information confidential " +
         "for a period of five years following termination of this agreement.",
-    "Governing Law: This agreement is governed by and construed in accordance with the laws of " +
-        "the State of Delaware, without regard to its conflict of laws principles.",
+    "Governing Law: This Agreement, and any dispute arising out of or in connection with it or " +
+        "its subject matter or formation, shall be governed by and construed in accordance with " +
+        "the laws of the State of Delaware, without regard to its conflict of laws principles. " +
+        "The parties irrevocably submit to the exclusive jurisdiction of the state and federal " +
+        "courts located in Delaware for any action arising out of or relating to this Agreement.",
     "Force Majeure: Neither party shall be liable for delays caused by circumstances beyond its " +
         "reasonable control."
 ]);
+
+SampleDocumentFactory.AppendParagraphs(contractPath, ["6. GOVERNING LAW"]);
 
 var transplantService = new ClauseTransplantService();
 var governingLawIndex = transplantService.ListParagraphs(clauseLibraryPath)
