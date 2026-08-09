@@ -60,7 +60,7 @@ public class PdfWatermarkServiceTests : IDisposable
         var page = doc.Pages[0];
         var combined = new StringBuilder();
         for (var i = 0; i < page.Contents.Elements.Count; i++)
-            combined.Append(Encoding.Latin1.GetString(page.Contents.Elements.GetDictionary(i).Stream!.UnfilteredValue));
+            combined.Append(Encoding.Latin1.GetString(page.Contents.Elements.GetDictionary(i)!.Stream!.UnfilteredValue!));
 
         var content = combined.ToString();
         var imageDrawIndex = content.IndexOf(" Do", StringComparison.Ordinal);
