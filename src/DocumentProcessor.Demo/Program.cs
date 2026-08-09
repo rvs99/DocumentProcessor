@@ -188,7 +188,7 @@ Step($"Wrote {Path.GetFileName(watermarkedDraftPath)} — \"DRAFT\" watermark, r
 // can't touch it — appropriate for a disclaimer that shouldn't be a click away from disappearing.
 var lockedWatermarkPath = Out("02b-contract-draft-watermarked-locked.docx");
 File.Copy(contractPath, lockedWatermarkPath, overwrite: true);
-docxWatermarkService.AddTextWatermark(lockedWatermarkPath, "CONFIDENTIAL — NOT FOR DISTRIBUTION", removable: false);
+docxWatermarkService.AddTextWatermark(lockedWatermarkPath, "DRAFT", removable: false);
 Step($"Wrote {Path.GetFileName(lockedWatermarkPath)} — locked watermark, Word's Remove Watermark can't clear it");
 
 // ---------------------------------------------------------------------------------------------
