@@ -19,6 +19,8 @@ free, permissively-licensed libraries — no paid or revenue-gated dependencies 
 | Watermarking (PDF) | `Watermarking/PdfWatermarkService.cs` |
 | E-sign field injection (docx + PDF) | `ESign/ESignFieldService.cs` |
 | Track changes accept/reject | `TrackChanges/TrackChangesService.cs` |
+| Page size, orientation, margins, columns, page breaks, default spacing | `Layout/PageLayoutService.cs` |
+| Headers/footers (default, first-page, even-page) | `Layout/HeaderFooterService.cs` |
 
 All services live under `src/DocumentProcessor.Core`, one folder per capability, and are usable
 independently — there's no shared "God object", just plain classes with a handful of public methods.
@@ -28,7 +30,7 @@ independently — there's no shared "God object", just plain classes with a hand
 ```
 src/DocumentProcessor.Core/    Reusable library — all document-processing services
 src/DocumentProcessor.Demo/    Console app: runs a full contract lifecycle through every capability
-tests/DocumentProcessor.Tests/ 34 xUnit tests, several exercising the real LibreOffice conversion
+tests/DocumentProcessor.Tests/ 65 xUnit tests, several exercising the real LibreOffice conversion
 ```
 
 ## Requirements
@@ -141,34 +143,45 @@ real callers bringing their own documents aren't bound by it.
 
 | | Supported | Not supported |
 |---|---|---|
-| **docx embedding** (`Fonts/FontEmbeddingService.cs`) | `EmbedFontFamily` embeds up to 4 style variants per family (regular required; bold/italic/bold-italic optional) via `FontFamilyFiles`. `ApplyFontToAllRuns` sets one family across all run script slots (ascii/high-ansi/complex-script/east-asian) at once. `ListEmbeddedFonts` for introspection. | **TTF/TTC only** — `.otf` throws `NotSupportedException` and must be pre-converted to TTF. No font subsetting (files embed whole). No per-script-type font mapping via `ApplyFontToAllRuns` (all 4 slots forced to the same family — callers wanting different East Asian/complex-script fonts need to set `RunFonts` themselves per run). |
+| **docx embedding** (`Fonts/FontEmbeddingService.cs`) | `EmbedFontFamily` embeds up to 4 style variants per family (regular required; bold/italic/bold-italic optional) via `FontFamilyFiles`. `ApplyFontToAllRuns` sets one family across all run script slots (ascii/high-ansi/complex-script/east-asian) at once. `ListEmbeddedFonts` for introspection. | **TTF/TTC only** — and not fixable: Word's own "Embed fonts in file" feature only embeds TrueType-flavored fonts, so a `.otf` restriction here matches Word's own ceiling, not a gap in this library. No font subsetting either — no free .NET library in this stack does TTF/OTF subsetting (files embed whole). No per-script-type font mapping via `ApplyFontToAllRuns` (all 4 slots forced to the same family — callers wanting different East Asian/complex-script fonts need to set `RunFonts` themselves per run). |
 | **PDF fonts** (`PdfFonts/PdfFontResolver.cs`) | `RegisterFont` accepts custom font bytes/file under a family name for use during PDF drawing (watermarking, etc.); one bundled fallback font (Roboto Mono) ships for when nothing custom is registered. | No distinct bold/italic *faces* — `ResolveTypeface`'s `isBold`/`isItalic` parameters are accepted but not used to pick a different font file; every weight/style renders in the one registered (or default) face. No standard-14 (Helvetica/Times/Courier) special-casing. No explicit Unicode-coverage/CID handling beyond what PDFsharp/SkiaSharp do natively with the supplied bytes. |
 
-### Page size & orientation
+### Page size, orientation, margins, columns, breaks, and spacing — `Layout/PageLayoutService.cs`
 
-**Not supported anywhere in the codebase.** There is no `w:pgSz`/`PageSize`/orientation code in
-either the docx or PDF path — pages fall back entirely to the rendering engine's own default
-(typically Letter or A4, depending on locale), not something this library sets or exposes.
-
-### Margins
+All section-properties methods take an optional `sectionIndex` (defaults to every section in the
+document — every document from this library has exactly one today, but the parameter means a future
+multi-section document won't need this API reworked).
 
 | | Supported | Not supported |
 |---|---|---|
-| **docx** | `SampleDocumentFactory.CreateDefaultSectionProperties()` sets explicit 1" margins on all sides, 0.5" header/footer, 0 gutter (`PageMargin { Top/Bottom/Left/Right = 1440, Header/Footer = 720, Gutter = 0 }`, twips) — **demo/sample-only**, not parameterized. | No production service in `DocumentProcessor.Core` (outside Samples) reads, sets, or exposes configurable margins — callers bringing their own docx keep whatever margins that document already has. |
-| **PDF** | — | No margin concept at all — the PDF services only stamp onto or read existing page geometry (`page.Width`/`page.Height`); nothing creates or resizes pages. |
+| **Page size & orientation** | `SetPageSize` with `PageSize.Letter()/.A4()/.Legal()` presets (each taking `PageOrientation.Portrait`/`.Landscape`, which swaps width/height and sets `w:pgSz/@w:orient`) or an explicit `PageSize(widthTwips, heightTwips)`. Verified surviving real LibreOffice conversion (`LayoutConversionTests`) — landscape Letter converts to a genuine 792×612pt PDF page, not just correct docx XML. | Any size beyond what you construct explicitly — there's no named-preset list beyond Letter/A4/Legal. |
+| **Margins** | `SetMargins` with `PageMargins.FromInches(...)` or explicit twips, covering top/bottom/left/right/header/footer/gutter. Callers bringing their own docx can now set this directly instead of it being demo-only. | PDF still has no margin concept — the PDF services only stamp onto or read existing page geometry; nothing creates or resizes PDF pages directly (margins only apply on the docx side, before conversion). |
+| **Columns** | `SetColumns(docxPath, columnCount, spacingTwips)` — equal-width `w:cols`. | Unequal column widths, or a column break mid-content (only the section-level column *count* is configurable). |
+| **Page breaks** | `InsertPageBreak(docxPath, beforeParagraphIndex)` — same 0-based paragraph-index convention as `ClauseTransplantService.ListParagraphs`. | — |
+| **Default paragraph/line spacing** | `SetDefaultParagraphSpacing(docxPath, afterTwips, lineTwips, lineRule)` — updates both `w:docDefaults` and the `Normal` style, the same mechanism `SampleDocumentFactory` now calls (rather than duplicating the logic) to match Word's Normal.dotm pagination baseline. | Per-paragraph spacing overrides — this sets the document-wide default, not individual paragraph properties. |
+| **Multi-section documents** | — | Every document still uses exactly one section; no support yet for mixed layouts (e.g. a landscape schedule inside a portrait contract) within a single docx. Deferred — see below. |
 
-### Layout
+### Headers & footers — `Layout/HeaderFooterService.cs`
+
+General-purpose header/footer text, distinct from `DocxWatermarkService`'s header injection (which
+is single-purpose — it only ever hosts the watermark shape).
 
 | | Supported | Not supported |
 |---|---|---|
-| **Headers** | `DocxWatermarkService` creates a header purely to host the watermark shape (replacing any existing default header reference) — single-purpose, not a general API. | No general-purpose "add header text/logo" capability. |
-| **Footers** | — | Not supported at all — zero footer-related code anywhere in `src/`. |
-| **Columns** | — | No multi-column page layout (`w:cols`) anywhere. |
-| **Page breaks** | — | Not supported — no `PageBreak` usage anywhere in the repo. |
-| **Sections** | — | Every document uses exactly one `SectionProperties`; no support for multiple sections/mixed layouts (e.g. a landscape schedule inside a portrait contract) within a single docx. |
-| **Line/paragraph spacing** | `SampleDocumentFactory.AddMinimalStyles` sets Word's own Normal.dotm baseline (Calibri 11pt, 8pt space-after, ~1.08x line spacing) as explicit `w:docDefaults` — **demo/sample-only**, chosen specifically to match real Word's pagination (see "Conversion fidelity" above). | No production API lets a caller configure spacing — it's fixed in the sample factory, or whatever the caller's own source document already specifies. |
-| **Tables** (`Tables/TableGenerationService.cs`) | Content is fully caller-driven via `TableSpec` (headers/rows/caption). Header row repeats on page breaks and renders bold automatically. | Column widths are always auto (not settable). Borders are a fixed single 0.5pt line on all edges — not configurable. No named table styles. No merged cells (`GridSpan`/`VerticalMerge` unused). Table width is fixed at 100% of the available line width. |
-| **Watermark placement** (both docx and PDF) | Text, font family, rotation angle, and color/opacity are all configurable per call. | Position is always dead-center on the page — no off-center placement. Size is fixed (docx: 415×207.5pt box, 72pt text; PDF: 72pt text, scaled only for supersampling) — no size/scale parameter. Same treatment applied uniformly to every page — no per-page variation. |
+| **Headers** | `SetHeaderText`/`RemoveHeader`, all three Word variants (`HeaderFooterValues.Default`/`.First`/`.Even`). Setting `.First` also turns on `w:titlePg`; setting `.Even` also turns on `w:evenAndOddHeaders` in document settings — both required for Word to actually honor that variant, not just accept the reference. | Non-text content (logos/images) — text only for now. |
+| **Footers** | `SetFooterText`/`RemoveFooter`, same three variants — this closes a gap that had zero footer-related code anywhere in the repo before. | Same as headers — text only. |
+
+### Remaining gaps (Phase 2–4, not yet built)
+
+- **Tables** (`Tables/TableGenerationService.cs`) — column widths are always auto, borders are a
+  fixed single 0.5pt line, no named table styles, no merged cells (`GridSpan`/`VerticalMerge` unused).
+- **Watermark placement** (both docx and PDF) — position is always dead-center, size is fixed; text,
+  font, rotation, and color/opacity are the only configurable pieces.
+- **PDF font resolver** — still one face per family, no separate bold/italic files (see Fonts above).
+- **Multi-section documents** — see the Page layout table above; this is the highest-complexity item
+  (splitting a single `Body` into independently-laid-out sections) and is deliberately being tackled
+  last, once real usage of the `Layout/` services above has shaken out the section-properties API
+  they'll build on.
 
 ## Design notes
 

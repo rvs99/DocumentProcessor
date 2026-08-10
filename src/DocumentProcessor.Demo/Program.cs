@@ -4,6 +4,7 @@ using DocumentProcessor.Core.Conversion;
 using DocumentProcessor.Core.ContentControls;
 using DocumentProcessor.Core.ESign;
 using DocumentProcessor.Core.FontEmbedding;
+using DocumentProcessor.Core.Layout;
 using DocumentProcessor.Core.Redlining;
 using DocumentProcessor.Core.Samples;
 using DocumentProcessor.Core.Tables;
@@ -43,6 +44,13 @@ bool PdfContainsText(string pdfPath, string text)
 {
     using var doc = PdfDocument.Open(pdfPath);
     return Enumerable.Range(1, doc.NumberOfPages).Any(i => doc.GetPage(i).Text.Contains(text));
+}
+
+(double WidthPt, double HeightPt) PdfPageSize(string pdfPath, int pageIndex)
+{
+    using var doc = PdfDocument.Open(pdfPath);
+    var page = doc.GetPage(pageIndex + 1); // PdfPig pages are 1-indexed
+    return (page.Width, page.Height);
 }
 
 Console.WriteLine("DocumentProcessor demo — running full document lifecycle.");
@@ -186,7 +194,43 @@ Step("Embedded Roboto Mono (SIL OFL) directly into the .docx and applied it to a
 Step("Document now renders correctly even on machines without this font installed");
 
 // ---------------------------------------------------------------------------------------------
-Section("6. Pull the governing-law clause in from the firm's clause library — clause transplant");
+Section("6. Produce a custom-layout exhibit page — page setup, headers/footers, columns, page breaks");
+// ---------------------------------------------------------------------------------------------
+
+// A separate copy, not a mutation of contractPath — this exercises page layout in isolation so it
+// doesn't disturb the rest of the pipeline (or the pagination-fidelity verification the main
+// contract depends on).
+var customLayoutPath = Out("11-draft-custom-layout.docx");
+File.Copy(contractPath, customLayoutPath, overwrite: true);
+
+var pageLayoutService = new PageLayoutService();
+pageLayoutService.SetPageSize(customLayoutPath, PageSize.Letter(PageOrientation.Landscape));
+pageLayoutService.SetMargins(customLayoutPath, PageMargins.FromInches(top: 0.75, bottom: 0.75, left: 0.75, right: 0.75));
+pageLayoutService.SetColumns(customLayoutPath, columnCount: 2);
+pageLayoutService.InsertPageBreak(customLayoutPath, beforeParagraphIndex: 1);
+Step("Set Letter/landscape page size, 0.75\" margins, 2 columns, and a page break after the title");
+
+var headerFooterService = new HeaderFooterService();
+headerFooterService.SetHeaderText(customLayoutPath, "Acme Corporation — Draft Exhibit");
+headerFooterService.SetFooterText(customLayoutPath, "Confidential — Page layout demonstration");
+Step("Added a header and footer (general-purpose, independent of watermarking)");
+
+try
+{
+    var customLayoutPdfPath = Out("11-draft-custom-layout.pdf");
+    await converter.ConvertAsync(customLayoutPath, customLayoutPdfPath);
+    var (widthPt, heightPt) = PdfPageSize(customLayoutPdfPath, pageIndex: 0);
+    Step($"Wrote {Path.GetFileName(customLayoutPdfPath)} — page 1 is {widthPt:F0}x{heightPt:F0}pt " +
+         $"({(widthPt > heightPt ? "landscape" : "portrait")}, confirming the layout survived LibreOffice conversion)");
+}
+catch (Exception ex)
+{
+    Step("SKIPPED — LibreOffice not available in this environment.");
+    Step($"  ({ex.GetType().Name}: {ex.Message})");
+}
+
+// ---------------------------------------------------------------------------------------------
+Section("7. Pull the governing-law clause in from the firm's clause library — clause transplant");
 // ---------------------------------------------------------------------------------------------
 
 var clauseLibraryPath = Out("03-clause-library.docx");
@@ -218,7 +262,7 @@ transplantService.TransplantParagraphs(
 Step("Copied the \"Governing Law\" clause from the clause library as-is, preserving its formatting");
 
 // ---------------------------------------------------------------------------------------------
-Section("7. Mark the draft with a watermark — docx watermarking (removable and locked modes)");
+Section("8. Mark the draft with a watermark — docx watermarking (removable and locked modes)");
 // ---------------------------------------------------------------------------------------------
 
 var docxWatermarkService = new DocxWatermarkService();
@@ -276,7 +320,7 @@ catch (Exception ex)
 }
 
 // ---------------------------------------------------------------------------------------------
-Section("8. Negotiation: counterparty proposes changes — simulated via tracked changes");
+Section("9. Negotiation: counterparty proposes changes — simulated via tracked changes");
 // ---------------------------------------------------------------------------------------------
 
 var negotiatedPath = Out("05-negotiated.docx");
@@ -285,7 +329,7 @@ contentControlService.ReplaceByTag(negotiatedPath, "ContractValue", "$275,000");
 Step("Counterparty countered on contract value: $250,000 -> $275,000");
 
 // ---------------------------------------------------------------------------------------------
-Section("9. Compare the draft against the negotiated version — redlining / docx comparison");
+Section("10. Compare the draft against the negotiated version — redlining / docx comparison");
 // ---------------------------------------------------------------------------------------------
 
 var redlinedPath = Out("06-redlined.docx");
@@ -298,7 +342,7 @@ foreach (var text in changeSummary.DeletedText.Take(3))
     Step($"  deleted:  \"{text}\"");
 
 // ---------------------------------------------------------------------------------------------
-Section("10. Legal accepts the change; produce the final accepted version — track changes accept/reject");
+Section("11. Legal accepts the change; produce the final accepted version — track changes accept/reject");
 // ---------------------------------------------------------------------------------------------
 
 var trackChangesService = new TrackChangesService();
@@ -314,7 +358,7 @@ trackChangesService.RejectAll(rejectedPath);
 Step($"Wrote {Path.GetFileName(rejectedPath)} — all changes rejected, for comparison (original value restored)");
 
 // ---------------------------------------------------------------------------------------------
-Section("11. Add an e-signature anchor to the final docx — e-sign field injection");
+Section("12. Add an e-signature anchor to the final docx — e-sign field injection");
 // ---------------------------------------------------------------------------------------------
 
 var esignService = new ESignFieldService();
@@ -322,7 +366,7 @@ esignService.InjectDocxAnchor(acceptedPath, anchorText: "/sig1/", tag: "ClientSi
 Step("Injected a \"/sig1/\" anchor tag — the convention DocuSign/Adobe Sign auto-detect for placement");
 
 // ---------------------------------------------------------------------------------------------
-Section("12. Convert the final contract to PDF for distribution — docx -> PDF conversion");
+Section("13. Convert the final contract to PDF for distribution — docx -> PDF conversion");
 // ---------------------------------------------------------------------------------------------
 
 var finalPdfPath = Out("08-final.pdf");
@@ -346,7 +390,7 @@ catch (Exception ex)
 if (pdfStepsRan)
 {
     // -----------------------------------------------------------------------------------------
-    Section("13. Watermark and tag the PDF for distribution — PDF watermarking + e-sign field injection");
+    Section("14. Watermark and tag the PDF for distribution — PDF watermarking + e-sign field injection");
     // -----------------------------------------------------------------------------------------
 
     var watermarkedPdfPath = Out("09-final-watermarked.pdf");
@@ -358,7 +402,7 @@ if (pdfStepsRan)
     Step($"Wrote {Path.GetFileName(signablePdfPath)} with a \"/sig1/\" e-signature anchor");
 
     // -----------------------------------------------------------------------------------------
-    Section("14. Verify the final PDF matches the negotiated terms — PDF comparison");
+    Section("15. Verify the final PDF matches the negotiated terms — PDF comparison");
     // -----------------------------------------------------------------------------------------
 
     var pdfComparisonService = new PdfComparisonService();
