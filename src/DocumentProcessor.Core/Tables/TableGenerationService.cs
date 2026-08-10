@@ -3,7 +3,35 @@ using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace DocumentProcessor.Core.Tables;
 
-public sealed record TableSpec(IReadOnlyList<string> Headers, IReadOnlyList<IReadOnlyList<string>> Rows, string? Caption = null);
+/// <summary>Uniform border style applied to all six border positions (outer edges + inside lines).</summary>
+public sealed record TableBorderSpec
+{
+    public BorderValues Style { get; init; } = BorderValues.Single;
+    public uint SizeEighthPoints { get; init; } = 4;
+    public string? ColorHex { get; init; }
+}
+
+public enum MergeDirection { Horizontal, Vertical }
+
+/// <summary>
+/// Merges <paramref name="Span"/> cells starting at (<paramref name="RowIndex"/>,
+/// <paramref name="ColumnIndex"/>) — row 0 is the header row, row 1+ are data rows — in
+/// <paramref name="Direction"/>. Merges may not overlap each other; only one merge may claim a
+/// given cell.
+/// </summary>
+public sealed record TableCellMerge(int RowIndex, int ColumnIndex, int Span, MergeDirection Direction);
+
+public sealed record TableSpec(
+    IReadOnlyList<string> Headers,
+    IReadOnlyList<IReadOnlyList<string>> Rows,
+    string? Caption = null,
+    /// <summary>Explicit column widths in twips. Must have one entry per header column when set; null means auto-width (the prior default behavior).</summary>
+    IReadOnlyList<int>? ColumnWidthsTwips = null,
+    /// <summary>Border style for all six border positions. Null keeps the prior default (single 0.5pt line, no explicit color).</summary>
+    TableBorderSpec? Borders = null,
+    /// <summary>References a table style already defined in the target document's styles part. Not validated — the caller is responsible for the style existing.</summary>
+    string? TableStyleId = null,
+    IReadOnlyList<TableCellMerge>? Merges = null);
 
 /// <summary>
 /// Builds Word tables programmatically (e.g. from a data grid, report, or clause schedule)
@@ -48,49 +76,167 @@ public sealed class TableGenerationService
     private Table BuildTable(TableSpec spec)
     {
         var columnCount = spec.Headers.Count;
-        var table = new Table();
+        var rowCount = spec.Rows.Count + 1; // +1 for the header row
 
-        table.AppendChild(new TableProperties(
-            new TableWidth { Type = TableWidthUnitValues.Pct, Width = "5000" },
-            new TableBorders(
-                new TopBorder { Val = BorderValues.Single, Size = 4 },
-                new BottomBorder { Val = BorderValues.Single, Size = 4 },
-                new LeftBorder { Val = BorderValues.Single, Size = 4 },
-                new RightBorder { Val = BorderValues.Single, Size = 4 },
-                new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4 },
-                new InsideVerticalBorder { Val = BorderValues.Single, Size = 4 })));
-
-        var grid = new TableGrid();
-        for (var i = 0; i < columnCount; i++)
-            grid.AppendChild(new GridColumn());
-        table.AppendChild(grid);
-
-        table.AppendChild(BuildRow(spec.Headers, isHeader: true));
-        foreach (var row in spec.Rows)
+        if (spec.ColumnWidthsTwips is not null && spec.ColumnWidthsTwips.Count != columnCount)
         {
-            if (row.Count != columnCount)
-                throw new ArgumentException($"Row has {row.Count} cells but table has {columnCount} header columns.");
-            table.AppendChild(BuildRow(row, isHeader: false));
+            throw new ArgumentException(
+                $"ColumnWidthsTwips has {spec.ColumnWidthsTwips.Count} entries but the table has {columnCount} columns.",
+                nameof(spec));
+        }
+
+        var roles = ResolveMergeRoles(spec.Merges, rowCount, columnCount);
+
+        var table = new Table();
+        table.AppendChild(BuildTableProperties(spec));
+        table.AppendChild(BuildTableGrid(columnCount, spec.ColumnWidthsTwips));
+
+        for (var row = 0; row < rowCount; row++)
+        {
+            var cellValues = row == 0 ? spec.Headers : spec.Rows[row - 1];
+            if (row > 0 && cellValues.Count != columnCount)
+                throw new ArgumentException($"Row has {cellValues.Count} cells but table has {columnCount} header columns.");
+
+            table.AppendChild(BuildRow(cellValues, isHeader: row == 0, row, columnCount, roles, spec.ColumnWidthsTwips));
         }
 
         return table;
     }
 
-    private static TableRow BuildRow(IReadOnlyList<string> cellValues, bool isHeader)
+    private static TableProperties BuildTableProperties(TableSpec spec)
+    {
+        var borders = spec.Borders ?? new TableBorderSpec();
+        var props = new TableProperties(
+            spec.ColumnWidthsTwips is { } widths
+                ? new TableWidth { Type = TableWidthUnitValues.Dxa, Width = widths.Sum().ToString() }
+                : new TableWidth { Type = TableWidthUnitValues.Pct, Width = "5000" },
+            new TableBorders(
+                BuildBorder<TopBorder>(borders), BuildBorder<BottomBorder>(borders),
+                BuildBorder<LeftBorder>(borders), BuildBorder<RightBorder>(borders),
+                BuildBorder<InsideHorizontalBorder>(borders), BuildBorder<InsideVerticalBorder>(borders)));
+
+        if (spec.ColumnWidthsTwips is not null)
+            props.AppendChild(new TableLayout { Type = TableLayoutValues.Fixed });
+
+        if (spec.TableStyleId is not null)
+            props.AppendChild(new TableStyle { Val = spec.TableStyleId });
+
+        return props;
+    }
+
+    private static TBorder BuildBorder<TBorder>(TableBorderSpec spec) where TBorder : BorderType, new()
+    {
+        var border = new TBorder { Val = spec.Style, Size = spec.SizeEighthPoints };
+        if (spec.ColorHex is not null)
+            border.Color = spec.ColorHex;
+        return border;
+    }
+
+    private static TableGrid BuildTableGrid(int columnCount, IReadOnlyList<int>? columnWidthsTwips)
+    {
+        var grid = new TableGrid();
+        for (var i = 0; i < columnCount; i++)
+        {
+            grid.AppendChild(columnWidthsTwips is not null
+                ? new GridColumn { Width = columnWidthsTwips[i].ToString() }
+                : new GridColumn());
+        }
+        return grid;
+    }
+
+    private static TableRow BuildRow(
+        IReadOnlyList<string> cellValues, bool isHeader, int rowIndex, int columnCount,
+        CellRole[,] roles, IReadOnlyList<int>? columnWidthsTwips)
     {
         var row = new TableRow();
         if (isHeader)
             row.AppendChild(new TableRowProperties(new TableHeader()));
 
-        foreach (var value in cellValues)
+        for (var col = 0; col < columnCount; col++)
         {
+            var role = roles[rowIndex, col];
+            if (role.Kind == MergeRoleKind.HorizontalContinuation)
+                continue; // absorbed into the horizontal-merge anchor's GridSpan; no cell of its own
+
+            var isContinuationCell = role.Kind == MergeRoleKind.VerticalContinuation;
+            var text = isContinuationCell ? "" : cellValues[col];
+
+            var cellProps = new TableCellProperties(columnWidthsTwips is not null
+                ? new TableCellWidth { Type = TableWidthUnitValues.Dxa, Width = columnWidthsTwips[col].ToString() }
+                : new TableCellWidth { Type = TableWidthUnitValues.Auto });
+
+            if (role.Kind == MergeRoleKind.HorizontalAnchor)
+                cellProps.AppendChild(new GridSpan { Val = role.Span });
+            else if (role.Kind == MergeRoleKind.VerticalAnchor)
+                cellProps.AppendChild(new VerticalMerge { Val = MergedCellValues.Restart });
+            else if (isContinuationCell)
+                cellProps.AppendChild(new VerticalMerge());
+
             var runProps = isHeader ? new RunProperties(new Bold()) : null;
-            var run = runProps is not null ? new Run(runProps, new Text(value)) : new Run(new Text(value));
-            var cell = new TableCell(new TableCellProperties(new TableCellWidth { Type = TableWidthUnitValues.Auto }),
-                new Paragraph(run));
-            row.AppendChild(cell);
+            var run = runProps is not null ? new Run(runProps, new Text(text)) : new Run(new Text(text));
+            row.AppendChild(new TableCell(cellProps, new Paragraph(run)));
         }
 
         return row;
+    }
+
+    private enum MergeRoleKind { None, HorizontalAnchor, HorizontalContinuation, VerticalAnchor, VerticalContinuation }
+
+    private readonly record struct CellRole(MergeRoleKind Kind, int Span);
+
+    private static CellRole[,] ResolveMergeRoles(IReadOnlyList<TableCellMerge>? merges, int rowCount, int columnCount)
+    {
+        var roles = new CellRole[rowCount, columnCount];
+        if (merges is null)
+            return roles;
+
+        var claimed = new bool[rowCount, columnCount];
+
+        foreach (var merge in merges)
+        {
+            if (merge.Span < 2)
+                throw new ArgumentException($"Merge span must be at least 2 (got {merge.Span}).", nameof(merges));
+
+            var rowSpan = merge.Direction == MergeDirection.Vertical ? merge.Span : 1;
+            var colSpan = merge.Direction == MergeDirection.Horizontal ? merge.Span : 1;
+
+            if (merge.RowIndex < 0 || merge.ColumnIndex < 0 ||
+                merge.RowIndex + rowSpan > rowCount || merge.ColumnIndex + colSpan > columnCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(merges),
+                    $"Merge at row {merge.RowIndex}, column {merge.ColumnIndex} with span {merge.Span} " +
+                    $"({merge.Direction}) falls outside the {rowCount}x{columnCount} table.");
+            }
+
+            for (var r = merge.RowIndex; r < merge.RowIndex + rowSpan; r++)
+            {
+                for (var c = merge.ColumnIndex; c < merge.ColumnIndex + colSpan; c++)
+                {
+                    if (claimed[r, c])
+                    {
+                        throw new ArgumentException(
+                            $"Cell (row {r}, column {c}) is claimed by more than one merge — overlapping merges are not supported.",
+                            nameof(merges));
+                    }
+                    claimed[r, c] = true;
+                }
+            }
+
+            var anchorKind = merge.Direction == MergeDirection.Horizontal ? MergeRoleKind.HorizontalAnchor : MergeRoleKind.VerticalAnchor;
+            roles[merge.RowIndex, merge.ColumnIndex] = new CellRole(anchorKind, merge.Span);
+
+            if (merge.Direction == MergeDirection.Horizontal)
+            {
+                for (var c = merge.ColumnIndex + 1; c < merge.ColumnIndex + colSpan; c++)
+                    roles[merge.RowIndex, c] = new CellRole(MergeRoleKind.HorizontalContinuation, 0);
+            }
+            else
+            {
+                for (var r = merge.RowIndex + 1; r < merge.RowIndex + rowSpan; r++)
+                    roles[r, merge.ColumnIndex] = new CellRole(MergeRoleKind.VerticalContinuation, 0);
+            }
+        }
+
+        return roles;
     }
 }

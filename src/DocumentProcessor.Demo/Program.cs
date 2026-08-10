@@ -215,6 +215,20 @@ headerFooterService.SetHeaderText(customLayoutPath, "Acme Corporation — Draft 
 headerFooterService.SetFooterText(customLayoutPath, "Confidential — Page layout demonstration");
 Step("Added a header and footer (general-purpose, independent of watermarking)");
 
+tableService.AppendTable(customLayoutPath, new TableSpec(
+    Headers: ["Category", "Item", "Unit Price"],
+    Rows:
+    [
+        ["Hardware", "Server rack", "$4,200.00"],
+        ["Hardware", "Network switch", "$850.00"],
+        ["Software", "License bundle", "$12,000.00"]
+    ],
+    Caption: "Exhibit A — Equipment Schedule",
+    ColumnWidthsTwips: [2400, 4400, 2400],
+    Borders: new TableBorderSpec { SizeEighthPoints = 8, ColorHex = "2E74B5" },
+    Merges: [new TableCellMerge(RowIndex: 1, ColumnIndex: 0, Span: 2, Direction: MergeDirection.Vertical)]));
+Step("Appended an equipment schedule with explicit column widths, a colored border, and a vertically merged \"Hardware\" cell");
+
 try
 {
     var customLayoutPdfPath = Out("11-draft-custom-layout.pdf");

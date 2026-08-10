@@ -30,7 +30,7 @@ independently — there's no shared "God object", just plain classes with a hand
 ```
 src/DocumentProcessor.Core/    Reusable library — all document-processing services
 src/DocumentProcessor.Demo/    Console app: runs a full contract lifecycle through every capability
-tests/DocumentProcessor.Tests/ 65 xUnit tests, several exercising the real LibreOffice conversion
+tests/DocumentProcessor.Tests/ 75 xUnit tests, several exercising the real LibreOffice conversion
 ```
 
 ## Requirements
@@ -171,10 +171,17 @@ is single-purpose — it only ever hosts the watermark shape).
 | **Headers** | `SetHeaderText`/`RemoveHeader`, all three Word variants (`HeaderFooterValues.Default`/`.First`/`.Even`). Setting `.First` also turns on `w:titlePg`; setting `.Even` also turns on `w:evenAndOddHeaders` in document settings — both required for Word to actually honor that variant, not just accept the reference. | Non-text content (logos/images) — text only for now. |
 | **Footers** | `SetFooterText`/`RemoveFooter`, same three variants — this closes a gap that had zero footer-related code anywhere in the repo before. | Same as headers — text only. |
 
-### Remaining gaps (Phase 2–4, not yet built)
+### Tables — `Tables/TableGenerationService.cs`
 
-- **Tables** (`Tables/TableGenerationService.cs`) — column widths are always auto, borders are a
-  fixed single 0.5pt line, no named table styles, no merged cells (`GridSpan`/`VerticalMerge` unused).
+| | Supported | Not supported |
+|---|---|---|
+| **Column widths** | `TableSpec.ColumnWidthsTwips` — explicit per-column widths (one entry per header column), applied to both `w:tblGrid` and every cell's `w:tcW`, with `w:tblLayout w:type="fixed"` so the renderer honors them instead of auto-fitting content. Omit for the prior auto-width behavior. | Mixed auto/fixed columns in one table — it's all-explicit or all-auto. |
+| **Borders** | `TableSpec.Borders` (a `TableBorderSpec`) — style, size (eighths-of-a-point), and an optional color, applied uniformly to all six border positions (outer edges + inside lines). Omit for the prior default (single 0.5pt line, no explicit color). | Per-edge border variation (e.g. a heavier outer border than inside lines) — one spec applies everywhere. |
+| **Named table styles** | `TableSpec.TableStyleId` sets `w:tblStyle` to reference a style already defined in the target document's styles part. | Not validated, and this library doesn't define/generate table styles itself — the caller is responsible for the style existing (e.g. one already present in a template docx). |
+| **Merged cells** | `TableSpec.Merges` (a list of `TableCellMerge(RowIndex, ColumnIndex, Span, Direction)`, row 0 = header row) — horizontal merges via `w:gridSpan`, vertical merges via `w:vMerge` (restart/continue). Verified surviving real LibreOffice conversion with text intact (`TableLayoutConversionTests`). | Merges can't overlap each other (validated, throws if they do) — a cell can be part of at most one merge, so an L-shaped or nested merge region isn't supported in one call. |
+
+### Remaining gaps (Phase 3–4, not yet built)
+
 - **Watermark placement** (both docx and PDF) — position is always dead-center, size is fixed; text,
   font, rotation, and color/opacity are the only configurable pieces.
 - **PDF font resolver** — still one face per family, no separate bold/italic files (see Fonts above).
