@@ -53,6 +53,12 @@ bool PdfContainsText(string pdfPath, string text)
     return (page.Width, page.Height);
 }
 
+int PdfPageCount(string pdfPath)
+{
+    using var doc = PdfDocument.Open(pdfPath);
+    return doc.NumberOfPages;
+}
+
 Console.WriteLine("DocumentProcessor demo — running full document lifecycle.");
 Console.WriteLine($"Output directory: {outputDir}");
 
@@ -194,7 +200,7 @@ Step("Embedded Roboto Mono (SIL OFL) directly into the .docx and applied it to a
 Step("Document now renders correctly even on machines without this font installed");
 
 // ---------------------------------------------------------------------------------------------
-Section("6. Produce a custom-layout exhibit page — page setup, headers/footers, columns, page breaks");
+Section("6. Produce a custom-layout exhibit + appendix — page setup, headers/footers, columns, page breaks, multi-section documents");
 // ---------------------------------------------------------------------------------------------
 
 // A separate copy, not a mutation of contractPath — this exercises page layout in isolation so it
@@ -229,13 +235,29 @@ tableService.AppendTable(customLayoutPath, new TableSpec(
     Merges: [new TableCellMerge(RowIndex: 1, ColumnIndex: 0, Span: 2, Direction: MergeDirection.Vertical)]));
 Step("Appended an equipment schedule with explicit column widths, a colored border, and a vertically merged \"Hardware\" cell");
 
+// Multi-section documents: everything above is one section (landscape, 2 columns). Split off a
+// second section for a plain portrait appendix — the "landscape schedule inside a portrait
+// contract" scenario this whole Layout/ area was ultimately built toward.
+var appendixStartIndex = new ClauseTransplantService().ListParagraphs(customLayoutPath).Count;
+SampleDocumentFactory.AppendParagraphs(customLayoutPath,
+    ["Appendix B — Notice", "This appendix reverts to a normal portrait, single-column layout, independent of Exhibit A above."]);
+
+pageLayoutService.InsertSectionBreak(customLayoutPath, beforeParagraphIndex: appendixStartIndex);
+pageLayoutService.SetPageSize(customLayoutPath, PageSize.Letter(PageOrientation.Portrait), sectionIndex: 1);
+pageLayoutService.SetMargins(customLayoutPath, PageMargins.FromInches(top: 1, bottom: 1, left: 1, right: 1), sectionIndex: 1);
+pageLayoutService.SetColumns(customLayoutPath, columnCount: 1, sectionIndex: 1);
+Step("Split off a second section for \"Appendix B\" — portrait, single-column, normal margins, independent of the landscape exhibit above");
+
 try
 {
     var customLayoutPdfPath = Out("11-draft-custom-layout.pdf");
     await converter.ConvertAsync(customLayoutPath, customLayoutPdfPath);
-    var (widthPt, heightPt) = PdfPageSize(customLayoutPdfPath, pageIndex: 0);
-    Step($"Wrote {Path.GetFileName(customLayoutPdfPath)} — page 1 is {widthPt:F0}x{heightPt:F0}pt " +
-         $"({(widthPt > heightPt ? "landscape" : "portrait")}, confirming the layout survived LibreOffice conversion)");
+    var (firstWidthPt, firstHeightPt) = PdfPageSize(customLayoutPdfPath, pageIndex: 0);
+    var pageCount = PdfPageCount(customLayoutPdfPath);
+    var (lastWidthPt, lastHeightPt) = PdfPageSize(customLayoutPdfPath, pageIndex: pageCount - 1);
+    Step($"Wrote {Path.GetFileName(customLayoutPdfPath)} ({pageCount} pages) — page 1 is {firstWidthPt:F0}x{firstHeightPt:F0}pt " +
+         $"({(firstWidthPt > firstHeightPt ? "landscape" : "portrait")}), last page is {lastWidthPt:F0}x{lastHeightPt:F0}pt " +
+         $"({(lastWidthPt > lastHeightPt ? "landscape" : "portrait")}) — two distinct page geometries, one docx, confirmed through real conversion");
 }
 catch (Exception ex)
 {

@@ -30,7 +30,7 @@ independently — there's no shared "God object", just plain classes with a hand
 ```
 src/DocumentProcessor.Core/    Reusable library — all document-processing services
 src/DocumentProcessor.Demo/    Console app: runs a full contract lifecycle through every capability
-tests/DocumentProcessor.Tests/ 102 xUnit tests, several exercising the real LibreOffice conversion
+tests/DocumentProcessor.Tests/ 110 xUnit tests, several exercising the real LibreOffice conversion
 ```
 
 ## Requirements
@@ -159,7 +159,7 @@ multi-section document won't need this API reworked).
 | **Columns** | `SetColumns(docxPath, columnCount, spacingTwips)` — equal-width `w:cols`. | Unequal column widths, or a column break mid-content (only the section-level column *count* is configurable). |
 | **Page breaks** | `InsertPageBreak(docxPath, beforeParagraphIndex)` — same 0-based paragraph-index convention as `ClauseTransplantService.ListParagraphs`. | — |
 | **Default paragraph/line spacing** | `SetDefaultParagraphSpacing(docxPath, afterTwips, lineTwips, lineRule)` — updates both `w:docDefaults` and the `Normal` style, the same mechanism `SampleDocumentFactory` now calls (rather than duplicating the logic) to match Word's Normal.dotm pagination baseline. | Per-paragraph spacing overrides — this sets the document-wide default, not individual paragraph properties. |
-| **Multi-section documents** | — | Every document still uses exactly one section; no support yet for mixed layouts (e.g. a landscape schedule inside a portrait contract) within a single docx. Deferred — see below. |
+| **Multi-section documents** | `InsertSectionBreak(docxPath, beforeParagraphIndex, breakType?)` splits the document into two independently-laid-out sections at a paragraph boundary (0-based, same convention as `InsertPageBreak`) — call it repeatedly for more than two. The new earlier section starts as a copy of whatever the document's current last section looks like; call `SetPageSize`/`SetMargins`/`SetColumns` afterward with the relevant `sectionIndex` to differentiate them (e.g. a landscape exhibit followed by a portrait appendix, both in one docx — exactly the demo's step 6). Verified surviving real LibreOffice conversion with two genuinely different page geometries in one PDF, not just correct docx XML (`MultiSectionConversionTests`). | Per-section headers/footers and per-section watermarks aren't wired up — `DocxWatermarkService`/`HeaderFooterService` still only address the document's single trailing section reference; a multi-section document's earlier sections keep whatever header/footer (if any) they already had. |
 
 ### Headers & footers — `Layout/HeaderFooterService.cs`
 
@@ -188,12 +188,9 @@ is single-purpose — it only ever hosts the watermark shape).
 | **Size** | Docx: `widthPt`/`heightPt` (the shape's bounding box) and `fontSizePt`. PDF: `fontSizePt`. Both default to the prior fixed values (415×207.5pt box / 72pt text) when omitted. | PDF has no separate box-size concept (the box was always implicit, sized to fit the rasterized text) — only the font size is adjustable there. |
 | **Everything else** | Text, font family, rotation angle, and color/opacity remain configurable as before. | Same treatment applied uniformly to every page — no per-page position/size variation within one call. |
 
-### Remaining gap (Phase 4, not yet built)
-
-- **Multi-section documents** — see the Page layout table above; this is the highest-complexity item
-  (splitting a single `Body` into independently-laid-out sections) and is deliberately being tackled
-  last, once real usage of the `Layout/` services above has shaken out the section-properties API
-  they'll build on.
+All four phases from the original gap list are now closed. The only remaining edges are the ones
+called out as genuine ceilings above (OTF/subsetting, per-section headers/footers/watermarks) rather
+than open work.
 
 ## Design notes
 

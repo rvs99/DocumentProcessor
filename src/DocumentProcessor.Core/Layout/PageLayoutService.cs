@@ -146,6 +146,63 @@ public sealed class PageLayoutService
     }
 
     /// <summary>
+    /// Splits the document into two sections at the top-level paragraph boundary
+    /// <paramref name="beforeParagraphIndex"/> (0-based, same convention as <see cref="InsertPageBreak"/>
+    /// and <see cref="Transplant.ClauseTransplantService.ListParagraphs"/>): everything before the
+    /// boundary becomes one section, everything from that point on becomes the next. The new earlier
+    /// section starts as a copy of whatever the document's current last section looks like — call
+    /// <see cref="SetPageSize"/>/<see cref="SetMargins"/>/<see cref="SetColumns"/> afterward with the
+    /// relevant <c>sectionIndex</c> to actually differentiate the two (e.g. a landscape exhibit
+    /// followed by a portrait appendix, both inside one docx).
+    /// </summary>
+    /// <remarks>
+    /// OOXML has no standalone "section break" element — a section boundary is represented by
+    /// attaching a <c>w:sectPr</c> to the <c>w:pPr</c> of the paragraph that ends the earlier section
+    /// (the document's final, trailing <c>w:sectPr</c> — a direct child of <c>w:body</c> — always
+    /// describes the last section). When the split point is the very first paragraph, there's no
+    /// preceding paragraph to carry it, so an empty one is inserted to serve as the anchor.
+    /// </remarks>
+    public void InsertSectionBreak(string docxPath, int beforeParagraphIndex, SectionMarkValues? breakType = null)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var document = GetDocument(doc);
+        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+
+        var paragraphs = body.Elements<Paragraph>().ToList();
+        if (beforeParagraphIndex < 0 || beforeParagraphIndex > paragraphs.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(beforeParagraphIndex),
+                $"Document has {paragraphs.Count} paragraphs; valid insertion points are 0..{paragraphs.Count}.");
+        }
+
+        var lastSectPr = body.Elements<SectionProperties>().LastOrDefault()
+            ?? throw new InvalidOperationException("Document has no trailing section properties.");
+        var newSectPr = (SectionProperties)lastSectPr.CloneNode(true);
+        if (breakType is not null)
+        {
+            newSectPr.Elements<SectionType>().FirstOrDefault()?.Remove();
+            newSectPr.PrependChild(new SectionType { Val = breakType });
+        }
+
+        Paragraph anchorParagraph;
+        if (beforeParagraphIndex == 0)
+        {
+            anchorParagraph = new Paragraph();
+            body.PrependChild(anchorParagraph);
+        }
+        else
+        {
+            anchorParagraph = paragraphs[beforeParagraphIndex - 1];
+        }
+
+        anchorParagraph.ParagraphProperties ??= new ParagraphProperties();
+        anchorParagraph.ParagraphProperties.SectionProperties?.Remove();
+        anchorParagraph.ParagraphProperties.SectionProperties = newSectPr;
+
+        document.Save();
+    }
+
+    /// <summary>
     /// Sets the document's default paragraph spacing (space-after, line spacing) on both
     /// <c>w:docDefaults</c> and the <c>Normal</c> style, so it applies to every paragraph that
     /// doesn't explicitly override it — the same mechanism (and the same Word Normal.dotm baseline

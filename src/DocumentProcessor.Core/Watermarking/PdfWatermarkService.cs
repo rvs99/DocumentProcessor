@@ -63,9 +63,19 @@ public sealed class PdfWatermarkService
         var widthPx = (int)(widthPt * SupersampleScale);
         var heightPx = (int)(heightPt * SupersampleScale);
 
-        using var bitmap = new SKBitmap(widthPx, heightPx, SKColorType.Rgba8888, SKAlphaType.Premul);
+        // Opaque (no alpha channel), not transparent: the watermark text's fade is baked into its
+        // pixel color by blending against this white background at draw time below, rather than
+        // left as a per-pixel alpha channel for the PDF viewer to composite. This produces a plain
+        // RGB image with no soft mask (SMask) needed — some PDF viewers, notably Adobe Acrobat, are
+        // considerably stricter than others about SMask streams PDFsharp generates from an alpha
+        // PNG, and can reject them with "Insufficient data for an image" even when the PDF is
+        // otherwise well-formed. Since this image is always drawn behind the page's real content
+        // (Prepend, see below), an opaque white background is visually identical to a transparent
+        // one — it just becomes the page's effective background instead of leaving that to the
+        // viewer's own default.
+        using var bitmap = new SKBitmap(widthPx, heightPx, SKColorType.Rgb888x, SKAlphaType.Opaque);
         using var canvas = new SKCanvas(bitmap);
-        canvas.Clear(SKColors.Transparent);
+        canvas.Clear(SKColors.White);
 
         using var typefaceData = SKData.CreateCopy(fontBytes);
         using var typeface = SKTypeface.FromData(typefaceData, 0) ?? SKTypeface.Default;
