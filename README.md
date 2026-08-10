@@ -82,6 +82,54 @@ dotnet run --project src/DocumentProcessor.Demo
 Without LibreOffice available, the docx-only capabilities (steps 1–10 of the demo) still run fine;
 PDF-dependent steps are skipped with a clear message rather than failing the whole run.
 
+## Conversion fidelity: what works and what doesn't
+
+The docx→PDF conversion path (LibreOffice headless) is the piece most likely to surprise you, so
+here's a direct accounting of what's been verified versus what's a known gap.
+
+**High-fidelity, verified:**
+- Plain/default-font documents (`demo-output/01b-contract-draft-normal-font.pdf` in the demo output)
+  convert essentially as a mirror of the source docx — no font-substitution variable in play.
+- Documents using an embedded custom font (`FontEmbedding/FontEmbeddingService.cs`) also convert
+  cleanly, since the font travels inside the docx itself rather than depending on the host having it
+  installed.
+- Pagination now closely tracks Word's own line-breaking, after `SampleDocumentFactory` was given
+  explicit `w:docDefaults` (spacing, line height, margins) — without those, LibreOffice and Word
+  disagree noticeably on where pages break, because each falls back to its own built-in defaults
+  rather than a shared standard.
+- docx and PDF watermarking (removable/locked modes), redlining, track-changes accept/reject, and
+  clause transplant have all been verified against real Word behavior, not just LibreOffice's own
+  round-trip.
+
+**Known, confirmed limitations — not configuration issues:**
+- **VML WordArt (`v:textpath`) is unsupported by LibreOffice's VML importer, full stop.** Confirmed
+  via an exhaustive from-scratch diagnostic sweep (size, position, rotation, z-index, header vs.
+  body, shapetype presence all ruled out as the cause). Plain VML text boxes (`v:textbox`, what our
+  watermarking uses) convert fine — only curved/stylized WordArt text is affected.
+- **Pagination fidelity is "very close," not byte-identical to Word.** LibreOffice's layout engine is
+  a different implementation from Word's; there's no way to reach pixel-perfect parity on a
+  free-only stack, and no way to validate against real Word without a paid license (out of scope by
+  design). Treat this as an accepted ceiling, not an open bug — see "Alternatives evaluated" below.
+- **Conversion is an external-process dependency, not pure managed code.** It requires `soffice`
+  (LibreOffice headless) to actually be installed and reachable wherever this runs — see
+  "LibreOffice setup" above. This is a deployment requirement, not a NuGet reference.
+- Untested surface area: headers/footers, embedded images/charts, nested tables, RTL text,
+  formatting-only tracked changes (bold/italic toggles without text insert/delete), moved-text
+  redlining, multi-signer e-sign flows. The demo exercises a realistic contract-editing path, not
+  the full OOXML surface.
+- `FontEmbeddingService.ApplyFontToAllRuns` (used by the demo) overwrites every run in the document
+  uniformly — a demo convenience, not a library constraint. Selective per-run font targeting is a
+  small caller-side change on top of `EmbedFontFamily`.
+- E-signature support is anchor-tag injection only (`/sig1/`), not a digital-signature/certificate
+  implementation — see the "E-sign field injection" design note below for why.
+
+**Alternatives evaluated and rejected** (as replacements for LibreOffice headless):
+- **OnlyOffice** — no fidelity advantage in testing, plus an unresolved licensing conflict: a
+  dependency's copyright metadata claims "Commercial" despite the project's public AGPL license.
+- **docx → HTML → Chromium headless print-to-PDF** — produced *worse* pagination fidelity than
+  LibreOffice (fit more content per page, diverging further from Word) and introduced new
+  text-rendering artifacts.
+
 ## Design notes
 
 - **E-sign field injection** uses the "anchor text" convention (e.g. `/sig1/`) that DocuSign/Adobe

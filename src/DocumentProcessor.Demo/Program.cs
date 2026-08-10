@@ -145,6 +145,25 @@ tableService.AppendTable(contractPath, new TableSpec(
     Caption: "Schedule A — Pricing"));
 Step("Appended a 4-column pricing table with caption \"Schedule A — Pricing\"");
 
+// Snapshot the draft here, on the plain default font (Calibri, via SampleDocumentFactory's
+// docDefaults), and convert it to PDF — every other PDF this demo produces goes through the
+// Roboto Mono override applied in the next step, so this is the one example of a normal-font
+// docx -> PDF conversion, useful for eyeballing general conversion/pagination fidelity without
+// the custom monospace font as a variable.
+var normalFontDraftPath = Out("01b-contract-draft-normal-font.docx");
+File.Copy(contractPath, normalFontDraftPath, overwrite: true);
+try
+{
+    var normalFontPdfPath = Out("01b-contract-draft-normal-font.pdf");
+    await converter.ConvertAsync(normalFontDraftPath, normalFontPdfPath);
+    Step($"Wrote {Path.GetFileName(normalFontPdfPath)} — same content, default font (Calibri), for comparison against the Roboto Mono version below");
+}
+catch (Exception ex)
+{
+    Step("SKIPPED normal-font PDF conversion — LibreOffice not available in this environment.");
+    Step($"  ({ex.GetType().Name}: {ex.Message})");
+}
+
 // ---------------------------------------------------------------------------------------------
 Section("4. Embed a custom font family — custom/embedded font support");
 // ---------------------------------------------------------------------------------------------

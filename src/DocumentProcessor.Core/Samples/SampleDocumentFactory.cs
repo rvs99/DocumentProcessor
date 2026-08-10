@@ -26,7 +26,7 @@ public static class SampleDocumentFactory
             body.AppendChild(new Paragraph(new Run(new Text(text))));
         }
 
-        body.AppendChild(new SectionProperties());
+        body.AppendChild(CreateDefaultSectionProperties());
         AddMinimalStyles(mainPart);
         mainPart.Document.Save();
     }
@@ -55,7 +55,7 @@ public static class SampleDocumentFactory
                 sdt));
         }
 
-        body.AppendChild(new SectionProperties());
+        body.AppendChild(CreateDefaultSectionProperties());
         AddMinimalStyles(mainPart);
         mainPart.Document.Save();
     }
@@ -90,7 +90,7 @@ public static class SampleDocumentFactory
                 { Id = "2", Author = author, Date = dateTime },
             new Run(new Text(" months.") { Space = SpaceProcessingModeValues.Preserve })));
 
-        body.AppendChild(new SectionProperties());
+        body.AppendChild(CreateDefaultSectionProperties());
         AddMinimalStyles(mainPart);
         mainPart.Document.Save();
     }
@@ -99,6 +99,18 @@ public static class SampleDocumentFactory
     {
         var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
         var styles = new Styles(
+            // Real Word documents always carry these Normal.dotm baseline values (Calibri 11pt,
+            // 8pt space-after, 1.08 line spacing) — they aren't an implicit zero, they're Word's
+            // own default template. Leaving them unspecified means every renderer (Word, LibreOffice,
+            // any other OOXML consumer) falls back to its own built-in default instead, and those
+            // defaults don't agree — confirmed to cause substantial pagination drift in testing.
+            // Setting them explicitly removes that ambiguity for whichever engine renders this.
+            new DocDefaults(
+                new RunPropertiesDefault(new RunPropertiesBaseStyle(
+                    new RunFonts { Ascii = "Calibri", HighAnsi = "Calibri", ComplexScript = "Calibri" },
+                    new FontSize { Val = "22" })),
+                new ParagraphPropertiesDefault(new ParagraphPropertiesBaseStyle(
+                    new SpacingBetweenLines { After = "160", Line = "259", LineRule = LineSpacingRuleValues.Auto }))),
             new Style(
                 new StyleName { Val = "Title" },
                 new BasedOn { Val = "Normal" },
@@ -110,7 +122,8 @@ public static class SampleDocumentFactory
             },
             new Style(
                 new StyleName { Val = "Normal" },
-                new RunProperties(new FontSize { Val = "22" }))
+                new ParagraphProperties(new SpacingBetweenLines { After = "160", Line = "259", LineRule = LineSpacingRuleValues.Auto }),
+                new RunProperties(new RunFonts { Ascii = "Calibri", HighAnsi = "Calibri", ComplexScript = "Calibri" }, new FontSize { Val = "22" }))
             {
                 Type = StyleValues.Paragraph,
                 StyleId = "Normal",
@@ -119,4 +132,12 @@ public static class SampleDocumentFactory
         stylesPart.Styles = styles;
         stylesPart.Styles.Save();
     }
+
+    /// <summary>
+    /// Explicit 1-inch margins on every side. LibreOffice's implicit default already matches this
+    /// when w:pgMar is omitted, but leaving it explicit removes that as a variable when comparing
+    /// against other renderers (e.g. real Word, or alternative conversion engines).
+    /// </summary>
+    private static SectionProperties CreateDefaultSectionProperties() =>
+        new(new PageMargin { Top = 1440, Bottom = 1440, Left = 1440, Right = 1440, Header = 720, Footer = 720, Gutter = 0 });
 }
