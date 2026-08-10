@@ -54,13 +54,21 @@ public sealed class DocxWatermarkService
     /// the ribbon. Use this for content that shouldn't be casually removable (e.g. a legal/compliance
     /// disclaimer) as opposed to a draft-status marker end users are expected to clear themselves.
     /// </param>
+    /// <param name="position">Where the watermark sits on the page. Defaults to dead-center, matching Word's own watermark placement.</param>
+    /// <param name="widthPt">Width of the shape's bounding box, in points. The text auto-fits to this box (<c>mso-fit-shape-to-text</c>).</param>
+    /// <param name="heightPt">Height of the shape's bounding box, in points.</param>
+    /// <param name="fontSizePt">Font size of the watermark text, in points.</param>
     public void AddTextWatermark(
         string docxPath,
         string text,
         string fontFamily = "Calibri",
         int rotationDegrees = -45,
         string colorHex = "C0C0C0",
-        bool removable = true)
+        bool removable = true,
+        WatermarkPosition position = WatermarkPosition.Center,
+        double widthPt = 415,
+        double heightPt = 207.5,
+        double fontSizePt = 72)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
@@ -70,7 +78,7 @@ public sealed class DocxWatermarkService
         var shapeId = removable ? $"{RemovableShapeIdPrefix}{Random.Shared.Next(10_000_000, 99_999_999)}" : LockedShapeId;
 
         var headerPart = mainPart.AddNewPart<HeaderPart>();
-        headerPart.Header = BuildWatermarkHeader(text, fontFamily, rotationDegrees, colorHex, shapeId);
+        headerPart.Header = BuildWatermarkHeader(text, fontFamily, rotationDegrees, colorHex, shapeId, position, widthPt, heightPt, fontSizePt);
         headerPart.Header.Save();
         var headerRelId = mainPart.GetIdOfPart(headerPart);
 
@@ -136,13 +144,15 @@ public sealed class DocxWatermarkService
     private static bool IsWatermarkShape(Shape shape) =>
         shape.Id?.Value is { } id && (id.StartsWith(RemovableShapeIdPrefix, StringComparison.Ordinal) || id == LockedShapeId);
 
-    private static Header BuildWatermarkHeader(string text, string fontFamily, int rotationDegrees, string colorHex, string shapeId)
+    private static Header BuildWatermarkHeader(
+        string text, string fontFamily, int rotationDegrees, string colorHex, string shapeId,
+        WatermarkPosition position, double widthPt, double heightPt, double fontSizePt)
     {
         var textRun = new Run(
             new RunProperties(
                 new RunFonts { Ascii = fontFamily, HighAnsi = fontFamily, ComplexScript = fontFamily },
                 new Color { Val = colorHex },
-                new FontSize { Val = "144" }), // half-points; 144 = 72pt
+                new FontSize { Val = ((int)(fontSizePt * 2)).ToString() }), // FontSize is in half-points
             new Text(text));
 
         var textParagraph = new Paragraph(
@@ -151,13 +161,14 @@ public sealed class DocxWatermarkService
 
         var textBox = new TextBox(new TextBoxContent(textParagraph)) { Style = "mso-fit-shape-to-text:t" };
 
+        var (horizontal, vertical) = PositionKeywords(position);
         var shape = new Shape(textBox)
         {
             Id = shapeId,
-            Style = "position:absolute;left:0;top:0;width:415pt;height:207.5pt;" +
+            Style = $"position:absolute;left:0;top:0;width:{widthPt}pt;height:{heightPt}pt;" +
                     $"rotation:{rotationDegrees};z-index:-251654144;" +
-                    "mso-position-horizontal:center;mso-position-horizontal-relative:margin;" +
-                    "mso-position-vertical:center;mso-position-vertical-relative:margin",
+                    $"mso-position-horizontal:{horizontal};mso-position-horizontal-relative:margin;" +
+                    $"mso-position-vertical:{vertical};mso-position-vertical-relative:margin",
             AllowInCell = false,
             Filled = false,
             Stroked = false
@@ -168,4 +179,18 @@ public sealed class DocxWatermarkService
         var paragraph = new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "Header" }), run);
         return new Header(paragraph);
     }
+
+    /// <summary>Maps a <see cref="WatermarkPosition"/> to VML's own <c>mso-position-horizontal</c>/<c>-vertical</c> keywords.</summary>
+    private static (string Horizontal, string Vertical) PositionKeywords(WatermarkPosition position) => position switch
+    {
+        WatermarkPosition.TopLeft => ("left", "top"),
+        WatermarkPosition.TopCenter => ("center", "top"),
+        WatermarkPosition.TopRight => ("right", "top"),
+        WatermarkPosition.MiddleLeft => ("left", "center"),
+        WatermarkPosition.MiddleRight => ("right", "center"),
+        WatermarkPosition.BottomLeft => ("left", "bottom"),
+        WatermarkPosition.BottomCenter => ("center", "bottom"),
+        WatermarkPosition.BottomRight => ("right", "bottom"),
+        _ => ("center", "center")
+    };
 }

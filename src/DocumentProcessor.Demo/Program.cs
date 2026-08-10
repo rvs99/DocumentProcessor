@@ -290,17 +290,22 @@ Step($"Wrote {Path.GetFileName(watermarkedDraftPath)} — \"DRAFT\" watermark, r
 
 // removable: false uses a shape id Word's Watermark UI doesn't recognize, so Remove Watermark
 // can't touch it — appropriate for a disclaimer that shouldn't be a click away from disappearing.
+// Also placed top-center and smaller than the removable one's dead-center default, to demonstrate
+// AddTextWatermark's position/size parameters, not just its removable/locked distinction.
 var lockedWatermarkPath = Out("04b-draft-watermarked-locked.docx");
 File.Copy(contractPath, lockedWatermarkPath, overwrite: true);
-docxWatermarkService.AddTextWatermark(lockedWatermarkPath, "DRAFT", removable: false);
-Step($"Wrote {Path.GetFileName(lockedWatermarkPath)} — locked watermark, Word's Remove Watermark can't clear it");
+docxWatermarkService.AddTextWatermark(lockedWatermarkPath, "DRAFT", removable: false,
+    position: WatermarkPosition.TopCenter, widthPt: 250, heightPt: 60, fontSizePt: 28);
+Step($"Wrote {Path.GetFileName(lockedWatermarkPath)} — locked watermark, top-center and smaller, Word's Remove Watermark can't clear it");
 
 // Converting a watermarked docx straight through LibreOffice would carry the watermark over as
 // real, selectable PDF text (v:textbox is genuine WordprocessingML content) — fine for a docx
 // that only ever opens in Word, but not what a distributed PDF should do. The production pattern
 // is strip -> convert -> reapply: remove the watermark before conversion, convert the clean docx,
 // then apply PdfWatermarkService (which rasterizes) to the result. See WatermarkPipelineTests.cs.
-async Task<string> ConvertWithNonSelectableWatermark(string watermarkedDocxPath, string watermarkText, string outputBaseName)
+async Task<string> ConvertWithNonSelectableWatermark(
+    string watermarkedDocxPath, string watermarkText, string outputBaseName,
+    WatermarkPosition position = WatermarkPosition.Center, double fontSizePt = 72)
 {
     var strippedCopyPath = Out($"~stripped-{outputBaseName}.docx");
     File.Copy(watermarkedDocxPath, strippedCopyPath, overwrite: true);
@@ -310,7 +315,7 @@ async Task<string> ConvertWithNonSelectableWatermark(string watermarkedDocxPath,
     await converter.ConvertAsync(strippedCopyPath, cleanPdfPath);
 
     var finalPdfPath = Out($"{outputBaseName}.pdf");
-    new PdfWatermarkService().AddTextWatermark(cleanPdfPath, finalPdfPath, watermarkText);
+    new PdfWatermarkService().AddTextWatermark(cleanPdfPath, finalPdfPath, watermarkText, position: position, fontSizePt: fontSizePt);
 
     File.Delete(strippedCopyPath);
     File.Delete(cleanPdfPath);
@@ -320,7 +325,8 @@ async Task<string> ConvertWithNonSelectableWatermark(string watermarkedDocxPath,
 try
 {
     var removablePdfPath = await ConvertWithNonSelectableWatermark(watermarkedDraftPath, "DRAFT", "04-draft-watermarked-removable");
-    var lockedPdfPath = await ConvertWithNonSelectableWatermark(lockedWatermarkPath, "DRAFT", "04b-draft-watermarked-locked");
+    var lockedPdfPath = await ConvertWithNonSelectableWatermark(lockedWatermarkPath, "DRAFT", "04b-draft-watermarked-locked",
+        position: WatermarkPosition.TopCenter, fontSizePt: 28);
 
     var removableStillSelectable = PdfContainsText(removablePdfPath, "DRAFT");
     var lockedStillSelectable = PdfContainsText(lockedPdfPath, "DRAFT");
@@ -408,8 +414,9 @@ if (pdfStepsRan)
     // -----------------------------------------------------------------------------------------
 
     var watermarkedPdfPath = Out("09-final-watermarked.pdf");
-    new PdfWatermarkService().AddTextWatermark(finalPdfPath, watermarkedPdfPath, "FINAL");
-    Step($"Wrote {Path.GetFileName(watermarkedPdfPath)} with a \"FINAL\" watermark");
+    new PdfWatermarkService().AddTextWatermark(finalPdfPath, watermarkedPdfPath, "FINAL",
+        position: WatermarkPosition.BottomRight, fontSizePt: 36);
+    Step($"Wrote {Path.GetFileName(watermarkedPdfPath)} with a \"FINAL\" watermark, bottom-right and smaller than the dead-center default");
 
     var signablePdfPath = Out("10-final-signable.pdf");
     esignService.InjectPdfAnchor(watermarkedPdfPath, signablePdfPath, "/sig1/", pageIndex: 0, x: 50, y: 700);

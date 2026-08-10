@@ -21,6 +21,8 @@ public sealed class PdfWatermarkService
 {
     private const float SupersampleScale = 2f;
 
+    /// <param name="position">Where the watermark sits on the page. Defaults to dead-center. Off-center positions use an inset margin proportional to the page size, since the text is drawn rotated around its own anchor point.</param>
+    /// <param name="fontSizePt">Font size of the watermark text, in points (before the internal supersampling scale-up used for antialiasing quality).</param>
     public void AddTextWatermark(
         string pdfPath,
         string outputPath,
@@ -28,7 +30,9 @@ public sealed class PdfWatermarkService
         string fontFamily = "Arial",
         double rotationDegrees = -45,
         byte grayLevel = 192,
-        byte alpha = 100)
+        byte alpha = 100,
+        WatermarkPosition position = WatermarkPosition.Center,
+        double fontSizePt = 72)
     {
         using var document = PdfReader.Open(pdfPath, PdfDocumentOpenMode.Modify);
         var fontBytes = PdfFontResolver.Instance.GetFontBytes(fontFamily);
@@ -38,7 +42,7 @@ public sealed class PdfWatermarkService
             var widthPt = page.Width.Point;
             var heightPt = page.Height.Point;
 
-            using var watermarkPng = RenderWatermarkPng(text, fontBytes, rotationDegrees, grayLevel, alpha, widthPt, heightPt);
+            using var watermarkPng = RenderWatermarkPng(text, fontBytes, rotationDegrees, grayLevel, alpha, widthPt, heightPt, position, fontSizePt);
             using var image = XImage.FromStream(watermarkPng);
 
             // Prepend, not the default Append: FromPdfPage's default draws new content on top of
@@ -53,7 +57,8 @@ public sealed class PdfWatermarkService
     }
 
     private static MemoryStream RenderWatermarkPng(
-        string text, byte[] fontBytes, double rotationDegrees, byte grayLevel, byte alpha, double widthPt, double heightPt)
+        string text, byte[] fontBytes, double rotationDegrees, byte grayLevel, byte alpha,
+        double widthPt, double heightPt, WatermarkPosition position, double fontSizePt)
     {
         var widthPx = (int)(widthPt * SupersampleScale);
         var heightPx = (int)(heightPt * SupersampleScale);
@@ -64,14 +69,15 @@ public sealed class PdfWatermarkService
 
         using var typefaceData = SKData.CreateCopy(fontBytes);
         using var typeface = SKTypeface.FromData(typefaceData, 0) ?? SKTypeface.Default;
-        using var font = new SKFont(typeface, 72 * SupersampleScale);
+        using var font = new SKFont(typeface, (float)fontSizePt * SupersampleScale);
         using var paint = new SKPaint
         {
             Color = new SKColor(grayLevel, grayLevel, grayLevel, alpha),
             IsAntialias = true
         };
 
-        canvas.Translate(widthPx / 2f, heightPx / 2f);
+        var (anchorX, anchorY) = AnchorPoint(position, widthPx, heightPx);
+        canvas.Translate(anchorX, anchorY);
         canvas.RotateDegrees((float)rotationDegrees);
         canvas.DrawText(text, 0, 0, SKTextAlign.Center, font, paint);
         canvas.Flush();
@@ -82,5 +88,33 @@ public sealed class PdfWatermarkService
         data.SaveTo(stream);
         stream.Position = 0;
         return stream;
+    }
+
+    /// <summary>
+    /// Translates a <see cref="WatermarkPosition"/> into a pixel anchor point, insetting off-center
+    /// positions from the page edge so rotated text doesn't clip off the page. The inset is
+    /// proportional to page size rather than a fixed value, since watermarks are applied to pages of
+    /// varying sizes (Letter, A4, landscape, etc.).
+    /// </summary>
+    private static (float X, float Y) AnchorPoint(WatermarkPosition position, int widthPx, int heightPx)
+    {
+        const float horizontalInset = 0.22f;
+        const float verticalInset = 0.18f;
+
+        var x = position switch
+        {
+            WatermarkPosition.TopLeft or WatermarkPosition.MiddleLeft or WatermarkPosition.BottomLeft => widthPx * horizontalInset,
+            WatermarkPosition.TopRight or WatermarkPosition.MiddleRight or WatermarkPosition.BottomRight => widthPx * (1 - horizontalInset),
+            _ => widthPx / 2f
+        };
+
+        var y = position switch
+        {
+            WatermarkPosition.TopLeft or WatermarkPosition.TopCenter or WatermarkPosition.TopRight => heightPx * verticalInset,
+            WatermarkPosition.BottomLeft or WatermarkPosition.BottomCenter or WatermarkPosition.BottomRight => heightPx * (1 - verticalInset),
+            _ => heightPx / 2f
+        };
+
+        return (x, y);
     }
 }

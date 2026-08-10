@@ -30,7 +30,7 @@ independently — there's no shared "God object", just plain classes with a hand
 ```
 src/DocumentProcessor.Core/    Reusable library — all document-processing services
 src/DocumentProcessor.Demo/    Console app: runs a full contract lifecycle through every capability
-tests/DocumentProcessor.Tests/ 75 xUnit tests, several exercising the real LibreOffice conversion
+tests/DocumentProcessor.Tests/ 102 xUnit tests, several exercising the real LibreOffice conversion
 ```
 
 ## Requirements
@@ -144,7 +144,7 @@ real callers bringing their own documents aren't bound by it.
 | | Supported | Not supported |
 |---|---|---|
 | **docx embedding** (`Fonts/FontEmbeddingService.cs`) | `EmbedFontFamily` embeds up to 4 style variants per family (regular required; bold/italic/bold-italic optional) via `FontFamilyFiles`. `ApplyFontToAllRuns` sets one family across all run script slots (ascii/high-ansi/complex-script/east-asian) at once. `ListEmbeddedFonts` for introspection. | **TTF/TTC only** — and not fixable: Word's own "Embed fonts in file" feature only embeds TrueType-flavored fonts, so a `.otf` restriction here matches Word's own ceiling, not a gap in this library. No font subsetting either — no free .NET library in this stack does TTF/OTF subsetting (files embed whole). No per-script-type font mapping via `ApplyFontToAllRuns` (all 4 slots forced to the same family — callers wanting different East Asian/complex-script fonts need to set `RunFonts` themselves per run). |
-| **PDF fonts** (`PdfFonts/PdfFontResolver.cs`) | `RegisterFont` accepts custom font bytes/file under a family name for use during PDF drawing (watermarking, etc.); one bundled fallback font (Roboto Mono) ships for when nothing custom is registered. | No distinct bold/italic *faces* — `ResolveTypeface`'s `isBold`/`isItalic` parameters are accepted but not used to pick a different font file; every weight/style renders in the one registered (or default) face. No standard-14 (Helvetica/Times/Courier) special-casing. No explicit Unicode-coverage/CID handling beyond what PDFsharp/SkiaSharp do natively with the supplied bytes. |
+| **PDF fonts** (`PdfFonts/PdfFontResolver.cs`) | `RegisterFont` for a single (regular-only) family, or `RegisterFontFamily` with a `PdfFontFamilyFiles` (mirroring the docx side's `FontFamilyFiles`) to register up to 4 style variants at once. `ResolveTypeface`/`GetFontBytes` now actually use `isBold`/`isItalic` to pick the matching registered face, degrading gracefully bold-italic → bold → italic → regular → bundled default when the exact style wasn't registered. Verified via `PdfFontResolverTests` (no bold/italic font asset is bundled in this repo, so this isn't shown in the demo — only unit-tested with marker files). One bundled fallback font (Roboto Mono, regular only) ships for when nothing custom is registered. | No standard-14 (Helvetica/Times/Courier) special-casing. No explicit Unicode-coverage/CID handling beyond what PDFsharp/SkiaSharp do natively with the supplied bytes. |
 
 ### Page size, orientation, margins, columns, breaks, and spacing — `Layout/PageLayoutService.cs`
 
@@ -180,11 +180,16 @@ is single-purpose — it only ever hosts the watermark shape).
 | **Named table styles** | `TableSpec.TableStyleId` sets `w:tblStyle` to reference a style already defined in the target document's styles part. | Not validated, and this library doesn't define/generate table styles itself — the caller is responsible for the style existing (e.g. one already present in a template docx). |
 | **Merged cells** | `TableSpec.Merges` (a list of `TableCellMerge(RowIndex, ColumnIndex, Span, Direction)`, row 0 = header row) — horizontal merges via `w:gridSpan`, vertical merges via `w:vMerge` (restart/continue). Verified surviving real LibreOffice conversion with text intact (`TableLayoutConversionTests`). | Merges can't overlap each other (validated, throws if they do) — a cell can be part of at most one merge, so an L-shaped or nested merge region isn't supported in one call. |
 
-### Remaining gaps (Phase 3–4, not yet built)
+### Watermark placement — `Watermarking/DocxWatermarkService.cs`, `Watermarking/PdfWatermarkService.cs`
 
-- **Watermark placement** (both docx and PDF) — position is always dead-center, size is fixed; text,
-  font, rotation, and color/opacity are the only configurable pieces.
-- **PDF font resolver** — still one face per family, no separate bold/italic files (see Fonts above).
+| | Supported | Not supported |
+|---|---|---|
+| **Position** | `position: WatermarkPosition` on both services — `Center` (the prior fixed default) plus the 8 compass points (`TopLeft` … `BottomRight`). Docx maps directly to VML's own `mso-position-horizontal`/`-vertical` keywords; PDF insets off-center positions proportionally to page size, since the text is drawn rotated around its own anchor point. Verified with a real visual diff between placements (`WatermarkPositionAndSizeTests`), not just "it didn't throw." | Arbitrary absolute X/Y coordinates — 9 fixed positions only, no free placement. |
+| **Size** | Docx: `widthPt`/`heightPt` (the shape's bounding box) and `fontSizePt`. PDF: `fontSizePt`. Both default to the prior fixed values (415×207.5pt box / 72pt text) when omitted. | PDF has no separate box-size concept (the box was always implicit, sized to fit the rasterized text) — only the font size is adjustable there. |
+| **Everything else** | Text, font family, rotation angle, and color/opacity remain configurable as before. | Same treatment applied uniformly to every page — no per-page position/size variation within one call. |
+
+### Remaining gap (Phase 4, not yet built)
+
 - **Multi-section documents** — see the Page layout table above; this is the highest-complexity item
   (splitting a single `Body` into independently-laid-out sections) and is deliberately being tackled
   last, once real usage of the `Layout/` services above has shaken out the section-properties API
