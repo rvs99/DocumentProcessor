@@ -14,7 +14,13 @@ using UglyToad.PdfPig;
 
 // Walks through a single contract's lifecycle end to end, exercising every capability of the
 // module in the order a real document-processing pipeline would use them: draft → populate →
-// assemble → brand → negotiate → finalize → convert → distribute → verify.
+// assemble → baseline-convert → brand → negotiate → finalize → convert → distribute → verify.
+//
+// Files are numbered in the order they're produced (01, 02, 03, ...), not by section number —
+// several sections (populate, embed font, transplant clause) mutate the working draft in place
+// rather than emitting a new file, so section count and file count naturally diverge. A letter
+// suffix (04b, 07b, 08b) marks a true sibling variant of the file with the same number
+// (removable vs. locked watermark, accepted vs. rejected, final vs. negotiated-for-comparison).
 
 var outputDir = Path.Combine(AppContext.BaseDirectory, "demo-output");
 if (Directory.Exists(outputDir))
@@ -42,9 +48,9 @@ bool PdfContainsText(string pdfPath, string text)
 Console.WriteLine("DocumentProcessor demo — running full document lifecycle.");
 Console.WriteLine($"Output directory: {outputDir}");
 
-// Set up once, used both for the LibreOffice-rendering check in step 6 and the real conversion in
-// step 11. Set DOCPROC_LIBREOFFICE_WSL_DISTRO=Ubuntu to route through WSL for local Windows dev
-// (see Properties/launchSettings.json) instead of a native soffice binary.
+// Set up once, reused by every conversion step below. Set DOCPROC_LIBREOFFICE_WSL_DISTRO=Ubuntu to
+// route through WSL for local Windows dev (see Properties/launchSettings.json) instead of a native
+// soffice binary.
 var wslDistro = Environment.GetEnvironmentVariable("DOCPROC_LIBREOFFICE_WSL_DISTRO");
 var converterOptions = wslDistro is not null
     ? new WordToPdfConversionOptions { UseWslDistro = wslDistro }
@@ -55,7 +61,7 @@ var converter = new WordToPdfConverter(converterOptions);
 Section("1. Draft the contract, with content controls as fill-in fields");
 // ---------------------------------------------------------------------------------------------
 
-var contractPath = Out("01-contract-draft.docx");
+var contractPath = Out("01-draft.docx");
 SampleDocumentFactory.CreateDocumentWithContentControls(contractPath, new Dictionary<string, string>
 {
     ["ClientName"] = "[Client Name]",
@@ -145,27 +151,31 @@ tableService.AppendTable(contractPath, new TableSpec(
     Caption: "Schedule A — Pricing"));
 Step("Appended a 4-column pricing table with caption \"Schedule A — Pricing\"");
 
+// ---------------------------------------------------------------------------------------------
+Section("4. Baseline conversion: draft to PDF in the default font — docx -> PDF conversion");
+// ---------------------------------------------------------------------------------------------
+
 // Snapshot the draft here, on the plain default font (Calibri, via SampleDocumentFactory's
-// docDefaults), and convert it to PDF — every other PDF this demo produces goes through the
-// Roboto Mono override applied in the next step, so this is the one example of a normal-font
-// docx -> PDF conversion, useful for eyeballing general conversion/pagination fidelity without
-// the custom monospace font as a variable.
-var normalFontDraftPath = Out("01b-contract-draft-normal-font.docx");
+// docDefaults) — before step 5 overrides every run to Roboto Mono. Every other PDF this demo
+// produces goes through that font override, so this is the one example of a normal-font docx ->
+// PDF conversion, useful for eyeballing general conversion/pagination fidelity without the custom
+// monospace font as a variable.
+var normalFontDraftPath = Out("02-draft-normal-font.docx");
 File.Copy(contractPath, normalFontDraftPath, overwrite: true);
 try
 {
-    var normalFontPdfPath = Out("01b-contract-draft-normal-font.pdf");
+    var normalFontPdfPath = Out("02-draft-normal-font.pdf");
     await converter.ConvertAsync(normalFontDraftPath, normalFontPdfPath);
-    Step($"Wrote {Path.GetFileName(normalFontPdfPath)} — same content, default font (Calibri), for comparison against the Roboto Mono version below");
+    Step($"Wrote {Path.GetFileName(normalFontPdfPath)} — default font (Calibri), for comparison against the Roboto Mono PDFs later in the pipeline");
 }
 catch (Exception ex)
 {
-    Step("SKIPPED normal-font PDF conversion — LibreOffice not available in this environment.");
+    Step("SKIPPED — LibreOffice not available in this environment.");
     Step($"  ({ex.GetType().Name}: {ex.Message})");
 }
 
 // ---------------------------------------------------------------------------------------------
-Section("4. Embed a custom font family — custom/embedded font support");
+Section("5. Embed a custom font family — custom/embedded font support");
 // ---------------------------------------------------------------------------------------------
 
 var fontService = new FontEmbeddingService();
@@ -176,10 +186,10 @@ Step("Embedded Roboto Mono (SIL OFL) directly into the .docx and applied it to a
 Step("Document now renders correctly even on machines without this font installed");
 
 // ---------------------------------------------------------------------------------------------
-Section("5. Pull the governing-law clause in from the firm's clause library — clause transplant");
+Section("6. Pull the governing-law clause in from the firm's clause library — clause transplant");
 // ---------------------------------------------------------------------------------------------
 
-var clauseLibraryPath = Out("clause-library.docx");
+var clauseLibraryPath = Out("03-clause-library.docx");
 SampleDocumentFactory.CreateBasicDocument(clauseLibraryPath, "Master Clause Library",
 [
     "Confidentiality: Each party agrees to keep the other's proprietary information confidential " +
@@ -192,6 +202,7 @@ SampleDocumentFactory.CreateBasicDocument(clauseLibraryPath, "Master Clause Libr
     "Force Majeure: Neither party shall be liable for delays caused by circumstances beyond its " +
         "reasonable control."
 ]);
+Step($"Created {Path.GetFileName(clauseLibraryPath)} — the source library this clause is pulled from");
 
 SampleDocumentFactory.AppendParagraphs(contractPath, ["6. GOVERNING LAW"]);
 
@@ -207,21 +218,21 @@ transplantService.TransplantParagraphs(
 Step("Copied the \"Governing Law\" clause from the clause library as-is, preserving its formatting");
 
 // ---------------------------------------------------------------------------------------------
-Section("6. Mark the draft with a watermark — docx watermarking (removable and locked modes)");
+Section("7. Mark the draft with a watermark — docx watermarking (removable and locked modes)");
 // ---------------------------------------------------------------------------------------------
 
 var docxWatermarkService = new DocxWatermarkService();
 
 // removable: true (the default) matches Word's own naming convention, so end users can clear it
 // themselves via Design -> Watermark -> Remove Watermark once the document is finalized.
-var watermarkedDraftPath = Out("02-contract-draft-watermarked-removable.docx");
+var watermarkedDraftPath = Out("04-draft-watermarked-removable.docx");
 File.Copy(contractPath, watermarkedDraftPath, overwrite: true);
 docxWatermarkService.AddTextWatermark(watermarkedDraftPath, "DRAFT", removable: true);
 Step($"Wrote {Path.GetFileName(watermarkedDraftPath)} — \"DRAFT\" watermark, removable via Word's own UI");
 
 // removable: false uses a shape id Word's Watermark UI doesn't recognize, so Remove Watermark
 // can't touch it — appropriate for a disclaimer that shouldn't be a click away from disappearing.
-var lockedWatermarkPath = Out("02b-contract-draft-watermarked-locked.docx");
+var lockedWatermarkPath = Out("04b-draft-watermarked-locked.docx");
 File.Copy(contractPath, lockedWatermarkPath, overwrite: true);
 docxWatermarkService.AddTextWatermark(lockedWatermarkPath, "DRAFT", removable: false);
 Step($"Wrote {Path.GetFileName(lockedWatermarkPath)} — locked watermark, Word's Remove Watermark can't clear it");
@@ -250,8 +261,8 @@ async Task<string> ConvertWithNonSelectableWatermark(string watermarkedDocxPath,
 
 try
 {
-    var removablePdfPath = await ConvertWithNonSelectableWatermark(watermarkedDraftPath, "DRAFT", "02-contract-draft-watermarked-removable");
-    var lockedPdfPath = await ConvertWithNonSelectableWatermark(lockedWatermarkPath, "DRAFT", "02b-contract-draft-watermarked-locked");
+    var removablePdfPath = await ConvertWithNonSelectableWatermark(watermarkedDraftPath, "DRAFT", "04-draft-watermarked-removable");
+    var lockedPdfPath = await ConvertWithNonSelectableWatermark(lockedWatermarkPath, "DRAFT", "04b-draft-watermarked-locked");
 
     var removableStillSelectable = PdfContainsText(removablePdfPath, "DRAFT");
     var lockedStillSelectable = PdfContainsText(lockedPdfPath, "DRAFT");
@@ -265,19 +276,19 @@ catch (Exception ex)
 }
 
 // ---------------------------------------------------------------------------------------------
-Section("7. Negotiation: counterparty proposes changes — simulated via tracked changes");
+Section("8. Negotiation: counterparty proposes changes — simulated via tracked changes");
 // ---------------------------------------------------------------------------------------------
 
-var negotiatedPath = Out("03-contract-negotiated.docx");
+var negotiatedPath = Out("05-negotiated.docx");
 File.Copy(contractPath, negotiatedPath, overwrite: true);
 contentControlService.ReplaceByTag(negotiatedPath, "ContractValue", "$275,000");
 Step("Counterparty countered on contract value: $250,000 -> $275,000");
 
 // ---------------------------------------------------------------------------------------------
-Section("8. Compare the draft against the negotiated version — redlining / docx comparison");
+Section("9. Compare the draft against the negotiated version — redlining / docx comparison");
 // ---------------------------------------------------------------------------------------------
 
-var redlinedPath = Out("04-contract-redlined.docx");
+var redlinedPath = Out("06-redlined.docx");
 var comparisonService = new DocumentComparisonService();
 var changeSummary = comparisonService.Compare(contractPath, negotiatedPath, redlinedPath, authorForRevisions: "Counterparty Counsel");
 Step($"Wrote {Path.GetFileName(redlinedPath)} — {changeSummary.InsertedCount} insertion(s), {changeSummary.DeletedCount} deletion(s)");
@@ -287,23 +298,23 @@ foreach (var text in changeSummary.DeletedText.Take(3))
     Step($"  deleted:  \"{text}\"");
 
 // ---------------------------------------------------------------------------------------------
-Section("9. Legal accepts the change; produce the final accepted version — track changes accept/reject");
+Section("10. Legal accepts the change; produce the final accepted version — track changes accept/reject");
 // ---------------------------------------------------------------------------------------------
 
 var trackChangesService = new TrackChangesService();
 
-var acceptedPath = Out("05-contract-accepted.docx");
+var acceptedPath = Out("07-accepted.docx");
 File.Copy(redlinedPath, acceptedPath, overwrite: true);
 trackChangesService.AcceptAll(acceptedPath);
 Step($"Wrote {Path.GetFileName(acceptedPath)} — all changes accepted (final contract value applies)");
 
-var rejectedPath = Out("06-contract-rejected.docx");
+var rejectedPath = Out("07b-rejected.docx");
 File.Copy(redlinedPath, rejectedPath, overwrite: true);
 trackChangesService.RejectAll(rejectedPath);
 Step($"Wrote {Path.GetFileName(rejectedPath)} — all changes rejected, for comparison (original value restored)");
 
 // ---------------------------------------------------------------------------------------------
-Section("10. Add an e-signature anchor to the final docx — e-sign field injection");
+Section("11. Add an e-signature anchor to the final docx — e-sign field injection");
 // ---------------------------------------------------------------------------------------------
 
 var esignService = new ESignFieldService();
@@ -311,11 +322,11 @@ esignService.InjectDocxAnchor(acceptedPath, anchorText: "/sig1/", tag: "ClientSi
 Step("Injected a \"/sig1/\" anchor tag — the convention DocuSign/Adobe Sign auto-detect for placement");
 
 // ---------------------------------------------------------------------------------------------
-Section("11. Convert the final contract to PDF for distribution — docx -> PDF conversion");
+Section("12. Convert the final contract to PDF for distribution — docx -> PDF conversion");
 // ---------------------------------------------------------------------------------------------
 
-var finalPdfPath = Out("07-contract-final.pdf");
-var negotiatedPdfPath = Out("08-contract-negotiated-for-comparison.pdf");
+var finalPdfPath = Out("08-final.pdf");
+var negotiatedPdfPath = Out("08b-negotiated-for-comparison.pdf");
 var pdfStepsRan = false;
 try
 {
@@ -335,19 +346,19 @@ catch (Exception ex)
 if (pdfStepsRan)
 {
     // -----------------------------------------------------------------------------------------
-    Section("12. Watermark and tag the PDF for distribution — PDF watermarking + e-sign field injection");
+    Section("13. Watermark and tag the PDF for distribution — PDF watermarking + e-sign field injection");
     // -----------------------------------------------------------------------------------------
 
-    var watermarkedPdfPath = Out("09-contract-final-watermarked.pdf");
+    var watermarkedPdfPath = Out("09-final-watermarked.pdf");
     new PdfWatermarkService().AddTextWatermark(finalPdfPath, watermarkedPdfPath, "FINAL");
     Step($"Wrote {Path.GetFileName(watermarkedPdfPath)} with a \"FINAL\" watermark");
 
-    var signablePdfPath = Out("10-contract-final-signable.pdf");
+    var signablePdfPath = Out("10-final-signable.pdf");
     esignService.InjectPdfAnchor(watermarkedPdfPath, signablePdfPath, "/sig1/", pageIndex: 0, x: 50, y: 700);
     Step($"Wrote {Path.GetFileName(signablePdfPath)} with a \"/sig1/\" e-signature anchor");
 
     // -----------------------------------------------------------------------------------------
-    Section("13. Verify the final PDF matches the negotiated terms — PDF comparison");
+    Section("14. Verify the final PDF matches the negotiated terms — PDF comparison");
     // -----------------------------------------------------------------------------------------
 
     var pdfComparisonService = new PdfComparisonService();

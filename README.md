@@ -9,7 +9,7 @@ free, permissively-licensed libraries — no paid or revenue-gated dependencies 
 |---|---|
 | Content control replacement in .docx | `ContentControls/ContentControlService.cs` |
 | Programmatic table generation/population | `Tables/TableGenerationService.cs` |
-| Custom/embedded font support (docx) | `FontEmbedding/FontEmbeddingService.cs` |
+| Custom/embedded font support (docx) | `Fonts/FontEmbeddingService.cs` |
 | Custom/embedded font support (PDF) | `PdfFonts/PdfFontResolver.cs` |
 | docx → PDF conversion | `Conversion/WordToPdfConverter.cs` (LibreOffice headless) |
 | Redlining / docx-vs-docx comparison | `Redlining/DocumentComparisonService.cs` |
@@ -88,7 +88,7 @@ The docx→PDF conversion path (LibreOffice headless) is the piece most likely t
 here's a direct accounting of what's been verified versus what's a known gap.
 
 **High-fidelity, verified:**
-- Plain/default-font documents (`demo-output/01b-contract-draft-normal-font.pdf` in the demo output)
+- Plain/default-font documents (`demo-output/02-draft-normal-font.pdf` in the demo output)
   convert essentially as a mirror of the source docx — no font-substitution variable in play.
 - Documents using an embedded custom font (`FontEmbedding/FontEmbeddingService.cs`) also convert
   cleanly, since the font travels inside the docx itself rather than depending on the host having it
@@ -129,6 +129,46 @@ here's a direct accounting of what's been verified versus what's a known gap.
 - **docx → HTML → Chromium headless print-to-PDF** — produced *worse* pagination fidelity than
   LibreOffice (fit more content per page, diverging further from Word) and introduced new
   text-rendering artifacts.
+
+## Fonts, page size, margins, and layout: what's supported
+
+A direct accounting of what's configurable through the library versus what's a fixed default or
+missing outright. Where something says "demo/sample-only," it means the value is hardcoded in
+`Samples/SampleDocumentFactory.cs` (used to generate throwaway fixtures for the demo and tests) —
+real callers bringing their own documents aren't bound by it.
+
+### Fonts
+
+| | Supported | Not supported |
+|---|---|---|
+| **docx embedding** (`Fonts/FontEmbeddingService.cs`) | `EmbedFontFamily` embeds up to 4 style variants per family (regular required; bold/italic/bold-italic optional) via `FontFamilyFiles`. `ApplyFontToAllRuns` sets one family across all run script slots (ascii/high-ansi/complex-script/east-asian) at once. `ListEmbeddedFonts` for introspection. | **TTF/TTC only** — `.otf` throws `NotSupportedException` and must be pre-converted to TTF. No font subsetting (files embed whole). No per-script-type font mapping via `ApplyFontToAllRuns` (all 4 slots forced to the same family — callers wanting different East Asian/complex-script fonts need to set `RunFonts` themselves per run). |
+| **PDF fonts** (`PdfFonts/PdfFontResolver.cs`) | `RegisterFont` accepts custom font bytes/file under a family name for use during PDF drawing (watermarking, etc.); one bundled fallback font (Roboto Mono) ships for when nothing custom is registered. | No distinct bold/italic *faces* — `ResolveTypeface`'s `isBold`/`isItalic` parameters are accepted but not used to pick a different font file; every weight/style renders in the one registered (or default) face. No standard-14 (Helvetica/Times/Courier) special-casing. No explicit Unicode-coverage/CID handling beyond what PDFsharp/SkiaSharp do natively with the supplied bytes. |
+
+### Page size & orientation
+
+**Not supported anywhere in the codebase.** There is no `w:pgSz`/`PageSize`/orientation code in
+either the docx or PDF path — pages fall back entirely to the rendering engine's own default
+(typically Letter or A4, depending on locale), not something this library sets or exposes.
+
+### Margins
+
+| | Supported | Not supported |
+|---|---|---|
+| **docx** | `SampleDocumentFactory.CreateDefaultSectionProperties()` sets explicit 1" margins on all sides, 0.5" header/footer, 0 gutter (`PageMargin { Top/Bottom/Left/Right = 1440, Header/Footer = 720, Gutter = 0 }`, twips) — **demo/sample-only**, not parameterized. | No production service in `DocumentProcessor.Core` (outside Samples) reads, sets, or exposes configurable margins — callers bringing their own docx keep whatever margins that document already has. |
+| **PDF** | — | No margin concept at all — the PDF services only stamp onto or read existing page geometry (`page.Width`/`page.Height`); nothing creates or resizes pages. |
+
+### Layout
+
+| | Supported | Not supported |
+|---|---|---|
+| **Headers** | `DocxWatermarkService` creates a header purely to host the watermark shape (replacing any existing default header reference) — single-purpose, not a general API. | No general-purpose "add header text/logo" capability. |
+| **Footers** | — | Not supported at all — zero footer-related code anywhere in `src/`. |
+| **Columns** | — | No multi-column page layout (`w:cols`) anywhere. |
+| **Page breaks** | — | Not supported — no `PageBreak` usage anywhere in the repo. |
+| **Sections** | — | Every document uses exactly one `SectionProperties`; no support for multiple sections/mixed layouts (e.g. a landscape schedule inside a portrait contract) within a single docx. |
+| **Line/paragraph spacing** | `SampleDocumentFactory.AddMinimalStyles` sets Word's own Normal.dotm baseline (Calibri 11pt, 8pt space-after, ~1.08x line spacing) as explicit `w:docDefaults` — **demo/sample-only**, chosen specifically to match real Word's pagination (see "Conversion fidelity" above). | No production API lets a caller configure spacing — it's fixed in the sample factory, or whatever the caller's own source document already specifies. |
+| **Tables** (`Tables/TableGenerationService.cs`) | Content is fully caller-driven via `TableSpec` (headers/rows/caption). Header row repeats on page breaks and renders bold automatically. | Column widths are always auto (not settable). Borders are a fixed single 0.5pt line on all edges — not configurable. No named table styles. No merged cells (`GridSpan`/`VerticalMerge` unused). Table width is fixed at 100% of the available line width. |
+| **Watermark placement** (both docx and PDF) | Text, font family, rotation angle, and color/opacity are all configurable per call. | Position is always dead-center on the page — no off-center placement. Size is fixed (docx: 415×207.5pt box, 72pt text; PDF: 72pt text, scaled only for supersampling) — no size/scale parameter. Same treatment applied uniformly to every page — no per-page variation. |
 
 ## Design notes
 
