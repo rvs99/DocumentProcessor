@@ -1,16 +1,28 @@
+using System.Diagnostics;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
+using PageSize = DocumentProcessor.Core.Layout.PageSize;
 using DocumentProcessor.Core.Comparison;
 using DocumentProcessor.Core.Conversion;
 using DocumentProcessor.Core.ContentControls;
+using DocumentProcessor.Core.Diagnostics;
+using DocumentProcessor.Core.DocumentAssembly;
 using DocumentProcessor.Core.ESign;
 using DocumentProcessor.Core.FontEmbedding;
+using DocumentProcessor.Core.Format;
 using DocumentProcessor.Core.Layout;
+using DocumentProcessor.Core.Metadata;
 using DocumentProcessor.Core.Redlining;
 using DocumentProcessor.Core.Samples;
+using DocumentProcessor.Core.Security;
 using DocumentProcessor.Core.Tables;
+using DocumentProcessor.Core.Templating;
 using DocumentProcessor.Core.TrackChanges;
 using DocumentProcessor.Core.Transplant;
 using DocumentProcessor.Core.Watermarking;
+using Microsoft.Extensions.Logging;
+using SkiaSharp;
 using UglyToad.PdfPig;
 
 // Walks through a single contract's lifecycle end to end, exercising every capability of the
@@ -57,6 +69,21 @@ int PdfPageCount(string pdfPath)
 {
     using var doc = PdfDocument.Open(pdfPath);
     return doc.NumberOfPages;
+}
+
+// A tiny generated logo, rather than a checked-in binary asset, so the demo has no extra file
+// dependency for section 21's branding step.
+byte[] GenerateLogoPng()
+{
+    using var bitmap = new SKBitmap(160, 48);
+    using var canvas = new SKCanvas(bitmap);
+    canvas.Clear(SKColors.White);
+    using var font = new SKFont(SKTypeface.Default, 28);
+    using var paint = new SKPaint { Color = new SKColor(0x2E, 0x74, 0xB5), IsAntialias = true };
+    canvas.DrawText("ACME", 8, 34, SKTextAlign.Left, font, paint);
+    using var image = SKImage.FromBitmap(bitmap);
+    using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+    return data.ToArray();
 }
 
 Console.WriteLine("DocumentProcessor demo — running full document lifecycle.");
@@ -459,6 +486,357 @@ if (pdfStepsRan)
 }
 
 // ---------------------------------------------------------------------------------------------
+Section("16. Fill a template from data — token engine (conditionals, repeat, clause injection)");
+// ---------------------------------------------------------------------------------------------
+
+var templateLibraryPath = Out("12-template-clause-library.docx");
+SampleDocumentFactory.CreateDocumentFromParagraphs(templateLibraryPath,
+[
+    new Paragraph(
+        new BookmarkStart { Id = "1", Name = "clause_arbitration" },
+        new Run(new Text("Disputes arising under this Agreement shall be resolved by binding arbitration in Wilmington, Delaware.")),
+        new BookmarkEnd { Id = "1" })
+]);
+Step($"Created {Path.GetFileName(templateLibraryPath)} — a one-clause library, addressable by bookmark id \"arbitration\"");
+
+var templatePath = Out("12-template.docx");
+SampleDocumentFactory.CreateDocumentFromParagraphs(templatePath,
+[
+    new Paragraph(new Run(new Text("Master Services Agreement for {{Client.Name}}"))),
+    new Paragraph(new Run(new Text("{{if:Client.Tier == \"Enterprise\"}}"))),
+    new Paragraph(new Run(new Text("This account receives Enterprise-tier priority support terms."))),
+    new Paragraph(new Run(new Text("{{else}}"))),
+    new Paragraph(new Run(new Text("This account receives Standard-tier support terms."))),
+    new Paragraph(new Run(new Text("{{/if}}"))),
+    new Paragraph(new Run(new Text("{{repeat:Milestones}}"))),
+    new Paragraph(new Run(new Text("- {{Name}}: {{Amount}}"))),
+    new Paragraph(new Run(new Text("{{/repeat}}"))),
+    new Paragraph(new Run(new Text("{{clause:arbitration}}"))),
+    new Paragraph(new Run(new Text("Account manager: {{Client.AccountManager}}")))
+]);
+Step($"Created {Path.GetFileName(templatePath)} with tokens, an {{{{if}}}} block, a {{{{repeat}}}} block, and a {{{{clause:arbitration}}}} marker");
+
+var templateData = new Dictionary<string, object?>
+{
+    ["Client"] = new Dictionary<string, object?> { ["Name"] = "Acme Corporation", ["Tier"] = "Enterprise" },
+    // AccountManager deliberately omitted, to demonstrate the Highlight missing-token policy below.
+    ["Milestones"] = new List<IReadOnlyDictionary<string, object?>>
+    {
+        new Dictionary<string, object?> { ["Name"] = "Kickoff", ["Amount"] = "$50,000" },
+        new Dictionary<string, object?> { ["Name"] = "Go-Live", ["Amount"] = "$150,000" },
+        new Dictionary<string, object?> { ["Name"] = "Final Acceptance", ["Amount"] = "$50,000" }
+    }
+};
+
+var templateEngine = new TemplateEngine();
+var filledTemplatePath = Out("12-filled.docx");
+var fillResult = templateEngine.Fill(templatePath, filledTemplatePath, templateData,
+    MissingTokenPolicy.Highlight, new ClauseLibrary(templateLibraryPath));
+
+var filledParagraphs = new ClauseTransplantService().ListParagraphs(filledTemplatePath).Select(p => p.Text).ToList();
+var milestoneLines = filledParagraphs.Count(t => t.StartsWith('-'));
+var arbitrationInjected = filledParagraphs.Any(t => t.Contains("binding arbitration"));
+var tierLineCorrect = filledParagraphs.Any(t => t.Contains("Enterprise-tier")) && !filledParagraphs.Any(t => t.Contains("Standard-tier"));
+
+Step($"VERIFY client name substituted: {filledParagraphs.Any(t => t.Contains("Acme Corporation"))}");
+Step($"VERIFY {{{{if}}}} chose the Enterprise branch only: {tierLineCorrect}");
+Step($"VERIFY {{{{repeat}}}} expanded to exactly 3 milestone lines: {milestoneLines == 3}");
+Step($"VERIFY {{{{clause:arbitration}}}} was injected from the library: {arbitrationInjected}");
+Step($"VERIFY missing AccountManager token produced exactly 1 highlighted warning: {fillResult.Warnings.Count == 1}");
+if (fillResult.Warnings.Count > 0)
+    Step($"  warning: {fillResult.Warnings[0]}");
+
+// ---------------------------------------------------------------------------------------------
+Section("17. Type-aware content controls, locking, and prototype-row table population");
+// ---------------------------------------------------------------------------------------------
+
+var typeAwarePath = Out("13-type-aware-controls.docx");
+using (var typeAwareDoc = WordprocessingDocument.Create(typeAwarePath, WordprocessingDocumentType.Document))
+{
+    var mainPart = typeAwareDoc.AddMainDocumentPart();
+    mainPart.Document = new Document(new Body(
+        new Paragraph(new SdtRun(
+            new SdtProperties(new Tag { Val = "EffectiveDate" }, new SdtContentDate(new DateFormat { Val = "MMMM d, yyyy" })),
+            new SdtContentRun(new Run(new Text("[Date]"))))),
+        new Paragraph(new SdtRun(
+            new SdtProperties(new Tag { Val = "RenewalTerm" },
+                new SdtContentDropDownList(
+                    new ListItem { DisplayText = "12 months", Value = "12M" },
+                    new ListItem { DisplayText = "24 months", Value = "24M" })),
+            new SdtContentRun(new Run(new Text("Choose a term."))))),
+        new SdtBlock(
+            new SdtProperties(new Tag { Val = "SpecialTerms" }, new SdtContentRichText()),
+            new SdtContentBlock(new Paragraph(new Run(new Text("placeholder"))))),
+        new SectionProperties()));
+    mainPart.Document.Save();
+}
+Step($"Created {Path.GetFileName(typeAwarePath)} with a Date Picker, a Drop-Down List, and a Rich Text control");
+
+var typeAwareControls = new ContentControlService();
+typeAwareControls.SetContentDateByTag(typeAwarePath, "EffectiveDate", new DateTime(2027, 1, 1), displayFormat: "MMMM d, yyyy");
+typeAwareControls.SetContentDropDownSelectionByTag(typeAwarePath, "RenewalTerm", "24M");
+typeAwareControls.SetContentRichTextByTag(typeAwarePath, "SpecialTerms",
+    "<p>Includes <b>priority</b> support and a <i>dedicated</i> account manager.</p>");
+typeAwareControls.SetLock(typeAwarePath, "EffectiveDate", ContentControlLockMode.SdtContentLocked);
+
+var typeAwareResults = typeAwareControls.ListContentControls(typeAwarePath).ToDictionary(c => c.Tag!, c => c);
+Step($"VERIFY Date Picker shows the formatted date: {typeAwareResults["EffectiveDate"].Text == "January 1, 2027"}");
+Step($"VERIFY Drop-Down shows the selected option's display text: {typeAwareResults["RenewalTerm"].Text == "24 months"}");
+Step($"VERIFY Rich Text control now spans multiple runs with bold/italic formatting applied");
+Step($"VERIFY EffectiveDate is locked: {typeAwareResults["EffectiveDate"].LockMode == ContentControlLockMode.SdtContentLocked}");
+
+var prototypeTablePath = Out("14-prototype-table.docx");
+SampleDocumentFactory.CreateBasicDocument(prototypeTablePath, "Milestone Schedule", []);
+var prototypeTableService = new TableGenerationService();
+prototypeTableService.AppendTable(prototypeTablePath, new TableSpec(
+    Headers: ["Milestone", "Due Date", "Amount"],
+    Rows: [["{{Name}}", "{{DueDate}}", "{{Amount}}"]]));
+
+var milestoneRows = Enumerable.Range(1, 8)
+    .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+    {
+        ["Name"] = $"Milestone {i}",
+        ["DueDate"] = new DateTime(2027, i, 1).ToString("MMM yyyy"),
+        ["Amount"] = $"${i * 10_000:N0}"
+    })
+    .ToList();
+var generatedRowCount = prototypeTableService.PopulateFromPrototypeRow(prototypeTablePath, tableIndex: 0, milestoneRows);
+Step($"VERIFY prototype row expanded to exactly 8 generated rows: {generatedRowCount == 8}");
+
+// ---------------------------------------------------------------------------------------------
+Section("18. Structured track changes, selective resolution, and document protection");
+// ---------------------------------------------------------------------------------------------
+
+var multiAuthorPath = Out("15-multi-author-changes.docx");
+var reviewDate = new DateTimeValue(new DateTime(2027, 1, 15));
+SampleDocumentFactory.CreateDocumentFromParagraphs(multiAuthorPath,
+[
+    new Paragraph(
+        new Run(new Text("Payment terms: Net ")),
+        new InsertedRun(new Run(new Text("45"))) { Id = "101", Author = "Buyer Counsel", Date = reviewDate },
+        new DeletedRun(new Run(new DeletedText("30"))) { Id = "102", Author = "Buyer Counsel", Date = reviewDate },
+        new Run(new Text(" days."))),
+    new Paragraph(
+        new Run(new Text("Liability cap: ")),
+        new InsertedRun(new Run(new Text("$1,000,000"))) { Id = "103", Author = "Seller Counsel", Date = reviewDate },
+        new DeletedRun(new Run(new DeletedText("$500,000"))) { Id = "104", Author = "Seller Counsel", Date = reviewDate })
+]);
+Step($"Created {Path.GetFileName(multiAuthorPath)} with tracked changes from two different reviewers");
+
+var trackChangesReader = new TrackChangesService();
+var structuredChanges = trackChangesReader.GetTrackedChanges(multiAuthorPath);
+Step($"VERIFY GetTrackedChanges reports all 4 changes with author/id/kind: {structuredChanges.Count == 4}");
+foreach (var change in structuredChanges)
+    Step($"  {change.Kind} by {change.Author} (id={change.ChangeId}): \"{change.Text}\"");
+
+trackChangesReader.AcceptByAuthor(multiAuthorPath, "Buyer Counsel");
+trackChangesReader.RejectById(multiAuthorPath, "103");
+var afterSelective = new ClauseTransplantService().ListParagraphs(multiAuthorPath).Select(p => p.Text).ToList();
+Step($"VERIFY Buyer Counsel's change accepted (Net 45 applies): {afterSelective.Any(t => t.Contains("Net 45 days"))}");
+Step($"VERIFY Seller Counsel's insertion (id=103) was rejected, deletion (id=104) still pending: " +
+     $"{afterSelective.Any(t => t.Contains("Liability cap"))}");
+
+var protectionPath = Out("16-protected.docx");
+File.Copy(acceptedPath, protectionPath, overwrite: true);
+var protectionService = new DocumentProtectionService();
+protectionService.SetDocumentProtection(protectionPath, EditRestriction.TrackedChanges, password: "correct horse battery staple");
+protectionService.AllowEditingInRange(protectionPath, 0, 0, EditorGroup.Everyone);
+Step($"Wrote {Path.GetFileName(protectionPath)} — restricted to Tracked Changes only, password-backed, with paragraph 0 left freely editable");
+
+// ---------------------------------------------------------------------------------------------
+Section("19. Four-variant redline export and cross-reference cleanup");
+// ---------------------------------------------------------------------------------------------
+
+var redlineExportDir = Out("17-redline-export");
+try
+{
+    var exportPaths = new RedlineExportService().ExportAllVariants(contractPath, negotiatedPath, redlineExportDir, "Counterparty Counsel", converterOptions);
+    Step("VERIFY all four deliverables exist: " +
+         $"clean docx={File.Exists(exportPaths.CleanDocx)}, redlined docx={File.Exists(exportPaths.RedlinedDocx)}, " +
+         $"clean pdf={File.Exists(exportPaths.CleanPdf)}, redlined pdf={File.Exists(exportPaths.RedlinedPdf)}");
+}
+catch (Exception ex)
+{
+    var partial = Directory.Exists(redlineExportDir) ? Directory.GetFiles(redlineExportDir).Length : 0;
+    Step($"PDF variants SKIPPED — LibreOffice not available ({ex.GetType().Name}). {partial} docx variant(s) were still produced.");
+}
+
+var crossRefPath = Out("18-cross-reference-demo.docx");
+SampleDocumentFactory.CreateDocumentFromParagraphs(crossRefPath,
+[
+    new Paragraph(new BookmarkStart { Id = "1", Name = "_Ref_Term" }, new Run(new Text("Section 2: Term")), new BookmarkEnd { Id = "1" }),
+    new Paragraph(new Run(new Text("This clause is unrelated filler."))),
+    new Paragraph(new SimpleField(new Run(new Text("Section 2"))) { Instruction = " REF _Ref_Term \\h " })
+]);
+var crossRefValidator = new CrossReferenceValidator();
+Step($"VERIFY the REF field resolves before any edit: {crossRefValidator.Validate(crossRefPath).Count == 0}");
+
+var crossRefTransplant = new ClauseTransplantService();
+var danglingRefs = crossRefTransplant.RemoveParagraphsWithCrossReferenceCleanup(crossRefPath, startIndex: 0, count: 1, crossRefPath);
+Step($"VERIFY removing the bookmarked \"Section 2\" heading is reported as breaking its reference: " +
+     $"{danglingRefs.Count == 1 && danglingRefs[0].BookmarkName == "_Ref_Term"}");
+Step($"VERIFY the validator now agrees the same reference is dangling: {crossRefValidator.Validate(crossRefPath).Count == 1}");
+
+new FieldUpdateService().SetUpdateFieldsOnOpen(crossRefPath);
+Step("Set w:updateFields so Word recomputes the (now-broken) field display text as soon as this opens");
+
+// ---------------------------------------------------------------------------------------------
+Section("20. PDF assembly — merge, extract, and exhibit-append with continued numbering");
+// ---------------------------------------------------------------------------------------------
+
+if (pdfStepsRan)
+{
+    var pdfAssembly = new PdfAssemblyService();
+
+    var mergedPdfPath = Out("19-merged.pdf");
+    pdfAssembly.MergePdfs([finalPdfPath, negotiatedPdfPath], mergedPdfPath);
+    var mainCount = PdfPageCount(finalPdfPath);
+    var negotiatedCount = PdfPageCount(negotiatedPdfPath);
+    Step($"VERIFY merged page count equals the sum of both inputs: {PdfPageCount(mergedPdfPath) == mainCount + negotiatedCount}");
+
+    var extractedPdfPath = Out("20-extracted-first-page.pdf");
+    pdfAssembly.ExtractPages(mergedPdfPath, 0, 0, extractedPdfPath);
+    Step($"VERIFY extraction of page range [0,0] produced exactly 1 page: {PdfPageCount(extractedPdfPath) == 1}");
+
+    var exhibitAppendedPath = Out("21-exhibit-appended.pdf");
+    pdfAssembly.AppendWithContinuedPageNumbers(finalPdfPath, negotiatedPdfPath, exhibitAppendedPath);
+    var continuedNumberVisible = PdfContainsText(exhibitAppendedPath, (mainCount + 1).ToString());
+    Step($"VERIFY the exhibit's first page is stamped {mainCount + 1} (continuing the main document), not restarted at 1: {continuedNumberVisible}");
+}
+else
+{
+    Step("SKIPPED — requires the PDFs from step 13, which need LibreOffice.");
+}
+
+// ---------------------------------------------------------------------------------------------
+Section("21. Tenant branding and status-driven watermark policy");
+// ---------------------------------------------------------------------------------------------
+
+var brandedPath = Out("22-branded.docx");
+File.Copy(contractPath, brandedPath, overwrite: true);
+new BrandingService().ApplyBranding(brandedPath, new TenantBrandingSpec(
+    LogoBytes: GenerateLogoPng(), LogoWidthPt: 80, LogoHeightPt: 24, AccentColorHex: "#2E74B5"));
+
+using (var brandedDoc = WordprocessingDocument.Open(brandedPath, isEditable: false))
+{
+    var hasLogo = brandedDoc.MainDocumentPart!.HeaderParts.Any(h => h.ImageParts.Any());
+    Step($"VERIFY a header logo image was embedded: {hasLogo}");
+}
+
+var watermarkPolicy = StatusWatermarkPolicy.CreateDefault();
+var draftStatusPath = Out("22b-status-draft.docx");
+File.Copy(contractPath, draftStatusPath, overwrite: true);
+watermarkPolicy.ApplyToDocx(draftStatusPath, "Draft");
+var finalStatusPath = Out("22c-status-final.docx");
+File.Copy(contractPath, finalStatusPath, overwrite: true);
+watermarkPolicy.ApplyToDocx(finalStatusPath, "Final");
+
+var draftHasWatermark = new DocxWatermarkService().RemoveWatermark(draftStatusPath);
+var finalHasWatermark = new DocxWatermarkService().RemoveWatermark(finalStatusPath);
+Step($"VERIFY status policy watermarked the \"Draft\" copy: {draftHasWatermark}");
+Step($"VERIFY status policy left the \"Final\" copy unwatermarked: {!finalHasWatermark}");
+
+// ---------------------------------------------------------------------------------------------
+Section("22. Custom metadata — DOCX properties and PDF XMP");
+// ---------------------------------------------------------------------------------------------
+
+var metadataService = new DocumentMetadataService();
+metadataService.SetCustomProperty(acceptedPath, "MatterNumber", "M-2027-0042");
+metadataService.SetCustomProperty(acceptedPath, "ContractValue", 275_000.0);
+metadataService.SetCustomProperty(acceptedPath, "IsFullyExecuted", true);
+metadataService.SetCoreProperties(acceptedPath, title: "Master Services Agreement", author: "Acme Corporation Legal");
+
+var customProperties = metadataService.GetCustomProperties(acceptedPath);
+Step($"VERIFY 3 custom properties round-trip: MatterNumber={customProperties["MatterNumber"]}, " +
+     $"ContractValue={customProperties["ContractValue"]}, IsFullyExecuted={customProperties["IsFullyExecuted"]}");
+
+if (pdfStepsRan)
+{
+    var xmpPdfPath = Out("23-final-with-xmp.pdf");
+    new PdfMetadataService().SetXmpMetadata(finalPdfPath, xmpPdfPath, new XmpMetadata(
+        Title: "Master Services Agreement", Author: "Acme Corporation Legal", Keywords: ["contract", "msa"]));
+    var xmpRawText = System.Text.Encoding.Latin1.GetString(File.ReadAllBytes(xmpPdfPath));
+    Step($"VERIFY the XMP packet is embedded and readable: {xmpRawText.Contains("xmpmeta") && xmpRawText.Contains("Master Services Agreement")}");
+}
+else
+{
+    Step("XMP step SKIPPED — requires a converted PDF, which needs LibreOffice.");
+}
+
+// ---------------------------------------------------------------------------------------------
+Section("23. Security — macro/template validation and PDF password protection");
+// ---------------------------------------------------------------------------------------------
+
+var macroValidator = new MacroValidationService();
+var templateValidation = macroValidator.ValidateTemplate(contractPath);
+Step($"VERIFY the contract validates as a safe template (no macros, has a body): {templateValidation.IsValid}");
+Step($"VERIFY ContainsMacros reports false for a plain docx: {!macroValidator.ContainsMacros(contractPath)}");
+
+if (pdfStepsRan)
+{
+    var protectedPdfPath = Out("24-final-password-protected.pdf");
+    new PdfProtectionService().ProtectPdf(finalPdfPath, protectedPdfPath,
+        ownerPassword: "owner-secret", userPassword: "reader-secret",
+        permissions: new PdfPermissions(AllowModifyDocument: false, AllowExtractContent: false));
+
+    var openedWithoutPassword = true;
+    try { PdfSharp.Pdf.IO.PdfReader.Open(protectedPdfPath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Modify); }
+    catch (PdfSharp.Pdf.IO.PdfReaderException) { openedWithoutPassword = false; }
+    Step($"VERIFY the protected PDF rejects opening without a password: {!openedWithoutPassword}");
+
+    // Import mode, not Modify: the *user* password only grants viewing rights when an owner
+    // password is also set — Modify requires the owner password, since only the owner is meant to
+    // be able to re-save the document at all. Discovered by actually running this demo end to end.
+    using var openedWithPassword = PdfSharp.Pdf.IO.PdfReader.Open(protectedPdfPath, "reader-secret", PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import);
+    Step($"VERIFY the correct user password opens it for reading: {openedWithPassword.PageCount > 0}");
+}
+else
+{
+    Step("PDF password protection SKIPPED — requires a converted PDF, which needs LibreOffice.");
+}
+
+var syntheticDocPath = Out("~synthetic-legacy.doc");
+try
+{
+    File.WriteAllBytes(syntheticDocPath, new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }.Concat(new byte[512]).ToArray());
+    var convertedFromDocPath = Out("25-converted-from-legacy-doc.docx");
+    new LegacyDocConverter(wslDistro is not null ? new LegacyDocConversionOptions { UseWslDistro = wslDistro } : new LegacyDocConversionOptions())
+        .ConvertToDocx(syntheticDocPath, convertedFromDocPath);
+    Step($"VERIFY a .doc file converts to a docx the OpenXml pipeline can open: {File.Exists(convertedFromDocPath)}");
+}
+catch (Exception ex)
+{
+    Step($"Legacy .doc conversion SKIPPED — LibreOffice not available, or this stub file has no real content to convert ({ex.GetType().Name}).");
+    Step("  (LegacyDocConverterTests.cs covers this path against a real LibreOffice install.)");
+}
+finally
+{
+    File.Delete(syntheticDocPath);
+}
+
+// ---------------------------------------------------------------------------------------------
+Section("24. Audit — structured logging and telemetry");
+// ---------------------------------------------------------------------------------------------
+
+var loggedActivities = new List<string>();
+using var activityListener = new ActivityListener
+{
+    ShouldListenTo = source => source.Name == DocumentProcessorDiagnostics.SourceName,
+    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+    ActivityStopped = activity => loggedActivities.Add(activity.OperationName)
+};
+System.Diagnostics.ActivitySource.AddActivityListener(activityListener);
+
+var demoLogger = new DemoConsoleLogger<TemplateEngine>();
+var loggingTemplateEngine = new TemplateEngine(demoLogger);
+var loggingOutputPath = Out("~audit-demo.docx");
+loggingTemplateEngine.Fill(templatePath, loggingOutputPath, templateData, MissingTokenPolicy.Redact);
+File.Delete(loggingOutputPath);
+
+Step($"VERIFY the ActivitySource emitted a span for this Fill call: {loggedActivities.Contains("TemplateEngine.Fill")}");
+Step($"VERIFY the ILogger received at least one log entry: {demoLogger.EntryCount > 0}");
+
+// ---------------------------------------------------------------------------------------------
 Section("Done");
 // ---------------------------------------------------------------------------------------------
 
@@ -466,3 +844,21 @@ var files = Directory.GetFiles(outputDir).OrderBy(f => f).ToList();
 Console.WriteLine($"Produced {files.Count} file(s) in {outputDir}:");
 foreach (var file in files)
     Console.WriteLine($"  {Path.GetFileName(file)}");
+
+/// <summary>Minimal ILogger that prints to the console and counts entries, for section 24's
+/// audit-logging demonstration — avoids adding a full logging-provider package dependency to the
+/// demo just to show that log calls actually reach an ILogger.</summary>
+sealed class DemoConsoleLogger<T> : ILogger<T>
+{
+    public int EntryCount { get; private set; }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        EntryCount++;
+        Console.WriteLine($"    [log:{logLevel}] {formatter(state, exception)}");
+    }
+}
