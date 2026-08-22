@@ -79,9 +79,68 @@ public sealed class DocumentMetadataService
 #pragma warning restore OOXML0001
     }
 
+    /// <summary>
+    /// Sets many custom properties in one document open/save. The single-property overloads each
+    /// pay a full unzip/parse/rezip of the whole package to write well under a kilobyte into
+    /// <c>docProps/custom.xml</c> — five properties meant five complete cycles of a 200-page
+    /// contract. Prefer this whenever setting more than one.
+    /// </summary>
+    public void SetCustomProperties(string docxPath, IReadOnlyDictionary<string, object?> properties)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        SetCustomPropertiesCore(doc, properties);
+    }
+
+    internal static void SetCustomPropertiesCore(WordprocessingDocument doc, IReadOnlyDictionary<string, object?> properties)
+    {
+        foreach (var (name, value) in properties)
+            SetCustomPropertyValueCore(doc, name, BuildVariant(value));
+    }
+
+    /// <summary>Maps a CLR value onto the OOXML variant type Word expects for a custom property.</summary>
+    private static DocumentFormat.OpenXml.OpenXmlElement BuildVariant(object? value) => value switch
+    {
+        null => new VT.VTLPWSTR { Text = string.Empty },
+        bool b => new VT.VTBool { Text = b ? "true" : "false" },
+        int i => new VT.VTInt32 { Text = i.ToString(CultureInfo.InvariantCulture) },
+        long l => new VT.VTInt32 { Text = l.ToString(CultureInfo.InvariantCulture) },
+        double d => new VT.VTDouble { Text = d.ToString(CultureInfo.InvariantCulture) },
+        decimal m => new VT.VTDouble { Text = m.ToString(CultureInfo.InvariantCulture) },
+        DateTime dt => new VT.VTFileTime { Text = dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture) },
+        _ => new VT.VTLPWSTR { Text = value.ToString() ?? string.Empty }
+    };
+
+    internal static IReadOnlyDictionary<string, string> GetCustomPropertiesCore(WordprocessingDocument doc)
+    {
+        var properties = doc.CustomFilePropertiesPart?.Properties;
+        if (properties is null)
+            return new Dictionary<string, string>();
+
+        return properties.Elements<CustomProps.CustomDocumentProperty>()
+            .Where(p => p.Name?.Value is not null)
+            .ToDictionary(p => p.Name!.Value!, p => p.InnerText);
+    }
+
+    internal static bool RemoveCustomPropertyCore(WordprocessingDocument doc, string name)
+    {
+        var properties = doc.CustomFilePropertiesPart?.Properties;
+        var existing = properties?.Elements<CustomProps.CustomDocumentProperty>().FirstOrDefault(p => p.Name?.Value == name);
+        if (existing is null)
+            return false;
+
+        existing.Remove();
+        properties!.Save();
+        return true;
+    }
+
     private void SetCustomPropertyValue(string docxPath, string name, DocumentFormat.OpenXml.OpenXmlElement valueElement)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        SetCustomPropertyValueCore(doc, name, valueElement);
+    }
+
+    internal static void SetCustomPropertyValueCore(WordprocessingDocument doc, string name, DocumentFormat.OpenXml.OpenXmlElement valueElement)
+    {
         var customPart = doc.CustomFilePropertiesPart ?? doc.AddNewPart<CustomFilePropertiesPart>();
         customPart.Properties ??= new CustomProps.Properties();
 
@@ -103,5 +162,39 @@ public sealed class DocumentMetadataService
 
         customPart.Properties.AppendChild(property);
         customPart.Properties.Save();
+    }
+}
+
+/// <summary>
+/// Document-property operations bound to an open <see cref="Sessions.DocumentSession"/>.
+/// </summary>
+public sealed class DocumentMetadataOperations
+{
+    private readonly Sessions.DocumentSession _session;
+
+    internal DocumentMetadataOperations(Sessions.DocumentSession session) => _session = session;
+
+    /// <inheritdoc cref="DocumentMetadataService.SetCustomProperties(string, IReadOnlyDictionary{string, object})"/>
+    public void SetCustomProperties(IReadOnlyDictionary<string, object?> properties) =>
+        DocumentMetadataService.SetCustomPropertiesCore(_session.Document, properties);
+
+    /// <inheritdoc cref="DocumentMetadataService.GetCustomProperties(string)"/>
+    public IReadOnlyDictionary<string, string> GetCustomProperties() =>
+        DocumentMetadataService.GetCustomPropertiesCore(_session.Document);
+
+    /// <inheritdoc cref="DocumentMetadataService.RemoveCustomProperty(string, string)"/>
+    public bool RemoveCustomProperty(string name) =>
+        DocumentMetadataService.RemoveCustomPropertyCore(_session.Document, name);
+
+    /// <inheritdoc cref="DocumentMetadataService.SetCoreProperties(string, string?, string?, string?, string?)"/>
+    public void SetCoreProperties(string? title = null, string? author = null, string? subject = null, string? keywords = null)
+    {
+#pragma warning disable OOXML0001 // PackageProperties is marked experimental but is the only supported route.
+        var properties = _session.Document.PackageProperties;
+        if (title is not null) properties.Title = title;
+        if (author is not null) properties.Creator = author;
+        if (subject is not null) properties.Subject = subject;
+        if (keywords is not null) properties.Keywords = keywords;
+#pragma warning restore OOXML0001
     }
 }

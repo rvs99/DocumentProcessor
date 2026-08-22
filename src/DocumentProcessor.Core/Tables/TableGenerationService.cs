@@ -44,6 +44,11 @@ public sealed class TableGenerationService
     public void AppendTable(string docxPath, TableSpec spec)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        AppendTableCore(doc, spec);
+    }
+
+    internal void AppendTableCore(WordprocessingDocument doc, TableSpec spec)
+    {
         var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
         var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
         var sectPr = body.Elements<SectionProperties>().FirstOrDefault();
@@ -63,6 +68,11 @@ public sealed class TableGenerationService
     public void ReplaceTable(string docxPath, int tableIndex, TableSpec spec)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        ReplaceTableCore(doc, tableIndex, spec);
+    }
+
+    internal void ReplaceTableCore(WordprocessingDocument doc, int tableIndex, TableSpec spec)
+    {
         var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
         var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
 
@@ -91,6 +101,15 @@ public sealed class TableGenerationService
         CancellationToken cancellationToken = default)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        return PopulateFromPrototypeRowCore(doc, tableIndex, rows, missingTokenPolicy, cancellationToken);
+    }
+
+    internal int PopulateFromPrototypeRowCore(
+        WordprocessingDocument doc, int tableIndex,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
+        MissingTokenPolicy missingTokenPolicy,
+        CancellationToken cancellationToken)
+    {
         var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
         var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
         var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
@@ -289,4 +308,29 @@ public sealed class TableGenerationService
 
         return roles;
     }
+}
+
+/// <summary>
+/// Table operations bound to an open <see cref="Sessions.DocumentSession"/>.
+/// </summary>
+public sealed class TableOperations
+{
+    private readonly Sessions.DocumentSession _session;
+    private readonly TableGenerationService _service = new();
+
+    internal TableOperations(Sessions.DocumentSession session) => _session = session;
+
+    /// <inheritdoc cref="TableGenerationService.AppendTable(string, TableSpec)"/>
+    public void AppendTable(TableSpec spec) => _service.AppendTableCore(_session.Document, spec);
+
+    /// <inheritdoc cref="TableGenerationService.ReplaceTable(string, int, TableSpec)"/>
+    public void ReplaceTable(int tableIndex, TableSpec spec) => _service.ReplaceTableCore(_session.Document, tableIndex, spec);
+
+    /// <inheritdoc cref="TableGenerationService.PopulateFromPrototypeRow(string, int, IReadOnlyList{IReadOnlyDictionary{string, object}}, MissingTokenPolicy, CancellationToken)"/>
+    public int PopulateFromPrototypeRow(
+        int tableIndex,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
+        MissingTokenPolicy missingTokenPolicy = MissingTokenPolicy.Error,
+        CancellationToken cancellationToken = default) =>
+        _service.PopulateFromPrototypeRowCore(_session.Document, tableIndex, rows, missingTokenPolicy, cancellationToken);
 }

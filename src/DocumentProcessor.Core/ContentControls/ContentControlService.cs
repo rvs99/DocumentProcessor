@@ -67,7 +67,7 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
         return (stream.ToArray(), updated);
     }
 
-    private static int ReplaceByTagCore(WordprocessingDocument doc, string tag, string newValue)
+    internal static int ReplaceByTagCore(WordprocessingDocument doc, string tag, string newValue)
     {
         var document = RequireDocument(doc);
 
@@ -104,6 +104,13 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
     {
         using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("ContentControlService.ReplaceMany");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var counts = ReplaceManyCore(doc, tagToValue);
+        LogReplaceManyResult(counts, docxPath);
+        return counts;
+    }
+
+    internal static IReadOnlyDictionary<string, int> ReplaceManyCore(WordprocessingDocument doc, IReadOnlyDictionary<string, string> tagToValue)
+    {
         var document = RequireDocument(doc);
 
         var counts = tagToValue.Keys.ToDictionary(t => t, _ => 0);
@@ -118,19 +125,26 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
         }
 
         document.Save();
+        return counts;
+    }
 
+    private void LogReplaceManyResult(IReadOnlyDictionary<string, int> counts, string source)
+    {
         var unmatchedTags = counts.Where(kv => kv.Value == 0).Select(kv => kv.Key).ToList();
         if (unmatchedTags.Count > 0)
-            _logger.LogWarning("ReplaceMany found no content control for tag(s) {Tags} in {DocxPath}", unmatchedTags, docxPath);
-        _logger.LogDebug("ReplaceMany updated {Count} tag(s) in {DocxPath}", counts.Count - unmatchedTags.Count, docxPath);
-
-        return counts;
+            _logger.LogWarning("ReplaceMany found no content control for tag(s) {Tags} in {Source}", unmatchedTags, source);
+        _logger.LogDebug("ReplaceMany updated {Count} tag(s) in {Source}", counts.Count - unmatchedTags.Count, source);
     }
 
     /// <summary>Lists every content control in the document with its tag, alias, current text, and lock state.</summary>
     public IReadOnlyList<ContentControlInfo> ListContentControls(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
+        return ListContentControlsCore(doc);
+    }
+
+    internal static IReadOnlyList<ContentControlInfo> ListContentControlsCore(WordprocessingDocument doc)
+    {
         var document = RequireDocument(doc);
 
         return document.Descendants<SdtElement>()
@@ -152,6 +166,11 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
     public int SetContentRichTextByTag(string docxPath, string tag, string html)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        return SetContentRichTextByTagCore(doc, tag, html);
+    }
+
+    internal static int SetContentRichTextByTagCore(WordprocessingDocument doc, string tag, string html)
+    {
         var document = RequireDocument(doc);
         var mainPart = doc.MainDocumentPart!;
 
@@ -209,6 +228,11 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
     public int SetContentDropDownSelectionByTag(string docxPath, string tag, string value)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        return SetContentDropDownSelectionByTagCore(doc, tag, value);
+    }
+
+    internal static int SetContentDropDownSelectionByTagCore(WordprocessingDocument doc, string tag, string value)
+    {
         var document = RequireDocument(doc);
 
         var updated = 0;
@@ -244,6 +268,11 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
     public int SetLock(string docxPath, string tag, ContentControlLockMode mode)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        return SetLockCore(doc, tag, mode);
+    }
+
+    internal static int SetLockCore(WordprocessingDocument doc, string tag, ContentControlLockMode mode)
+    {
         var document = RequireDocument(doc);
 
         var updated = 0;
@@ -334,4 +363,54 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
 
         contentContainer.AppendChild(newRun);
     }
+}
+
+/// <summary>
+/// Content-control operations bound to an open <see cref="Sessions.DocumentSession"/>. Every method
+/// mirrors the like-named one on <see cref="ContentControlService"/>, minus the path argument —
+/// they run against the session's already-open package instead of opening their own.
+/// </summary>
+public sealed class ContentControlOperations
+{
+    private readonly Sessions.DocumentSession _session;
+    private readonly ILogger<ContentControlService> _logger;
+
+    internal ContentControlOperations(Sessions.DocumentSession session, ILogger<ContentControlService> logger)
+    {
+        _session = session;
+        _logger = logger;
+    }
+
+    /// <inheritdoc cref="ContentControlService.ReplaceByTag(string, string, string)"/>
+    public int ReplaceByTag(string tag, string newValue)
+    {
+        var updated = ContentControlService.ReplaceByTagCore(_session.Document, tag, newValue);
+        if (updated == 0)
+            _logger.LogWarning("ReplaceByTag found no content control tagged {Tag}", tag);
+        return updated;
+    }
+
+    /// <inheritdoc cref="ContentControlService.ReplaceMany(string, IReadOnlyDictionary{string, string})"/>
+    public IReadOnlyDictionary<string, int> ReplaceMany(IReadOnlyDictionary<string, string> tagToValue) =>
+        ContentControlService.ReplaceManyCore(_session.Document, tagToValue);
+
+    /// <inheritdoc cref="ContentControlService.ListContentControls(string)"/>
+    public IReadOnlyList<ContentControlInfo> List() =>
+        ContentControlService.ListContentControlsCore(_session.Document);
+
+    /// <inheritdoc cref="ContentControlService.SetContentRichTextByTag(string, string, string)"/>
+    public int SetRichTextByTag(string tag, string html) =>
+        ContentControlService.SetContentRichTextByTagCore(_session.Document, tag, html);
+
+    /// <inheritdoc cref="ContentControlService.SetContentDateByTag(string, string, DateTime, string?)"/>
+    public int SetDateByTag(string tag, DateTime value, string? displayFormat = null) =>
+        ContentControlService.ReplaceByTagCore(_session.Document, tag, value.ToString(displayFormat ?? "yyyy-MM-dd"));
+
+    /// <inheritdoc cref="ContentControlService.SetContentDropDownSelectionByTag(string, string, string)"/>
+    public int SetDropDownSelectionByTag(string tag, string value) =>
+        ContentControlService.SetContentDropDownSelectionByTagCore(_session.Document, tag, value);
+
+    /// <inheritdoc cref="ContentControlService.SetLock(string, string, ContentControlLockMode)"/>
+    public int SetLock(string tag, ContentControlLockMode mode) =>
+        ContentControlService.SetLockCore(_session.Document, tag, mode);
 }
