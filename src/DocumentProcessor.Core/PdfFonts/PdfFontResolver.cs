@@ -28,10 +28,79 @@ public sealed class PdfFontResolver : IFontResolver
     private const string DefaultFamilyName = "DocProcDefault";
     private const string DefaultFontResourceName = "DocumentProcessor.Core.Assets.Fonts.RobotoMono-Regular.ttf";
 
+    /// <summary>
+    /// Separates the tenant prefix from the family name in a face key. Face keys are internal to
+    /// font resolution — PDFsharp uses them as its own cache key and hands them back to
+    /// <see cref="GetFont"/>; the name written into the PDF comes from the font file itself — so
+    /// this never reaches the output document. A control character keeps it from colliding with a
+    /// real family name.
+    /// </summary>
+    private const char TenantSeparator = '';
+
     private readonly ConcurrentDictionary<string, byte[]> _customFonts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lazy<byte[]> _defaultFontBytes = new(LoadEmbeddedDefaultFont);
 
+    /// <summary>
+    /// The tenant whose fonts the current logical call should see. <see cref="AsyncLocal{T}"/>
+    /// rather than a field because PDFsharp resolves fonts through one process-global
+    /// <see cref="GlobalFontSettings.FontResolver"/> — there is no per-document hook to attach
+    /// scope to — so the scope has to ride the async call context instead. It flows automatically
+    /// across awaits into whatever PDFsharp calls back into.
+    /// </summary>
+    private static readonly AsyncLocal<string?> CurrentTenant = new();
+
     private PdfFontResolver() { }
+
+    /// <summary>
+    /// Scopes font registration and resolution to <paramref name="tenantId"/> until the returned
+    /// handle is disposed. Without a scope, fonts register globally — which is correct for a
+    /// single-tenant host, and is what the tests and demo rely on.
+    /// <para>
+    /// In a shared multi-tenant process this is mandatory around any work that registers or draws
+    /// with tenant fonts. Two tenants that both call their font "BrandSans" would otherwise
+    /// overwrite each other last-writer-wins, and one tenant's licensed typeface would render onto
+    /// the other's contracts.
+    /// </para>
+    /// </summary>
+    public static IDisposable BeginTenantScope(string tenantId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        var previous = CurrentTenant.Value;
+        CurrentTenant.Value = tenantId;
+        return new TenantScope(previous);
+    }
+
+    private sealed class TenantScope(string? previous) : IDisposable
+    {
+        private int _disposed;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                CurrentTenant.Value = previous;
+        }
+    }
+
+    /// <summary>Drops every font registered under <paramref name="tenantId"/>. Without this the
+    /// cache grows for the life of the process — call it when a tenant is deprovisioned or evicted
+    /// from your own cache.</summary>
+    /// <returns>How many face entries were removed.</returns>
+    public int ClearTenant(string tenantId)
+    {
+        var prefix = tenantId + TenantSeparator;
+        var removed = 0;
+        foreach (var key in _customFonts.Keys)
+        {
+            if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && _customFonts.TryRemove(key, out _))
+                removed++;
+        }
+
+        return removed;
+    }
+
+    /// <summary>Qualifies a face key with the ambient tenant, so two tenants' identically-named
+    /// families occupy different entries.</summary>
+    private static string Scoped(string faceKey) =>
+        CurrentTenant.Value is { } tenant ? tenant + TenantSeparator + faceKey : faceKey;
 
     /// <summary>Installs this resolver as PDFsharp's global font source, if one isn't already set.</summary>
     public static void EnsureRegistered()
@@ -43,7 +112,7 @@ public sealed class PdfFontResolver : IFontResolver
     /// Registers a custom TrueType/OpenType font family for use in PDF drawing calls (e.g.
     /// <c>new XFont("Brand Sans", 12)</c> after calling <c>RegisterFont("Brand Sans", bytes)</c>).
     /// </summary>
-    public void RegisterFont(string familyName, byte[] fontBytes) => _customFonts[familyName] = fontBytes;
+    public void RegisterFont(string familyName, byte[] fontBytes) => _customFonts[Scoped(familyName)] = fontBytes;
 
     public void RegisterFont(string familyName, string fontFilePath) => RegisterFont(familyName, File.ReadAllBytes(fontFilePath));
 
@@ -58,13 +127,19 @@ public sealed class PdfFontResolver : IFontResolver
     {
         RegisterFont(familyName, files.Regular);
         if (files.Bold is not null)
-            _customFonts[FaceKey(familyName, bold: true, italic: false)] = File.ReadAllBytes(files.Bold);
+            _customFonts[Scoped(FaceKey(familyName, bold: true, italic: false))] = File.ReadAllBytes(files.Bold);
         if (files.Italic is not null)
-            _customFonts[FaceKey(familyName, bold: false, italic: true)] = File.ReadAllBytes(files.Italic);
+            _customFonts[Scoped(FaceKey(familyName, bold: false, italic: true))] = File.ReadAllBytes(files.Italic);
         if (files.BoldItalic is not null)
-            _customFonts[FaceKey(familyName, bold: true, italic: true)] = File.ReadAllBytes(files.BoldItalic);
+            _customFonts[Scoped(FaceKey(familyName, bold: true, italic: true))] = File.ReadAllBytes(files.BoldItalic);
     }
 
+    /// <summary>
+    /// Called back by PDFsharp with the face name <see cref="ResolveTypeface"/> returned — which is
+    /// already tenant-qualified, so it is looked up verbatim rather than re-scoped. Re-scoping here
+    /// would be wrong as well as redundant: PDFsharp may call this from a different async context
+    /// than the one that resolved the typeface.
+    /// </summary>
     public byte[] GetFont(string faceName) =>
         _customFonts.TryGetValue(faceName, out var bytes) ? bytes : _defaultFontBytes.Value;
 
@@ -84,19 +159,25 @@ public sealed class PdfFontResolver : IFontResolver
         return _defaultFontBytes.Value;
     }
 
+    /// <summary>
+    /// Returns a <em>tenant-qualified</em> face name. This is what makes the isolation actually
+    /// hold: PDFsharp keeps its own glyph-typeface cache keyed by the face name it gets back here,
+    /// so returning a bare family name would let it serve tenant A's already-cached face to tenant
+    /// B even after the dictionary itself was correctly partitioned.
+    /// </summary>
     public FontResolverInfo ResolveTypeface(string familyName, bool isBold, bool isItalic)
     {
-        if (!_customFonts.ContainsKey(familyName))
+        if (!_customFonts.ContainsKey(Scoped(familyName)))
             return new FontResolverInfo(DefaultFamilyName);
 
-        if (isBold && isItalic && _customFonts.ContainsKey(FaceKey(familyName, bold: true, italic: true)))
-            return new FontResolverInfo(FaceKey(familyName, bold: true, italic: true));
-        if (isBold && _customFonts.ContainsKey(FaceKey(familyName, bold: true, italic: false)))
-            return new FontResolverInfo(FaceKey(familyName, bold: true, italic: false));
-        if (isItalic && _customFonts.ContainsKey(FaceKey(familyName, bold: false, italic: true)))
-            return new FontResolverInfo(FaceKey(familyName, bold: false, italic: true));
+        if (isBold && isItalic && _customFonts.ContainsKey(Scoped(FaceKey(familyName, bold: true, italic: true))))
+            return new FontResolverInfo(Scoped(FaceKey(familyName, bold: true, italic: true)));
+        if (isBold && _customFonts.ContainsKey(Scoped(FaceKey(familyName, bold: true, italic: false))))
+            return new FontResolverInfo(Scoped(FaceKey(familyName, bold: true, italic: false)));
+        if (isItalic && _customFonts.ContainsKey(Scoped(FaceKey(familyName, bold: false, italic: true))))
+            return new FontResolverInfo(Scoped(FaceKey(familyName, bold: false, italic: true)));
 
-        return new FontResolverInfo(familyName);
+        return new FontResolverInfo(Scoped(familyName));
     }
 
     /// <summary>
@@ -106,14 +187,14 @@ public sealed class PdfFontResolver : IFontResolver
     /// </summary>
     private bool TryGetBestFace(string familyName, bool isBold, bool isItalic, out byte[] bytes)
     {
-        if (isBold && isItalic && _customFonts.TryGetValue(FaceKey(familyName, bold: true, italic: true), out bytes!))
+        if (isBold && isItalic && _customFonts.TryGetValue(Scoped(FaceKey(familyName, bold: true, italic: true)), out bytes!))
             return true;
-        if (isBold && _customFonts.TryGetValue(FaceKey(familyName, bold: true, italic: false), out bytes!))
+        if (isBold && _customFonts.TryGetValue(Scoped(FaceKey(familyName, bold: true, italic: false)), out bytes!))
             return true;
-        if (isItalic && _customFonts.TryGetValue(FaceKey(familyName, bold: false, italic: true), out bytes!))
+        if (isItalic && _customFonts.TryGetValue(Scoped(FaceKey(familyName, bold: false, italic: true)), out bytes!))
             return true;
 
-        return _customFonts.TryGetValue(familyName, out bytes!);
+        return _customFonts.TryGetValue(Scoped(familyName), out bytes!);
     }
 
     /// <summary>Composite dictionary key for a non-regular style variant — regular itself is keyed by the bare family name.</summary>
