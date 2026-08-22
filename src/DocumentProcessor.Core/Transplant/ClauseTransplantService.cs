@@ -64,4 +64,119 @@ public sealed class ClauseTransplantService
         var merged = DocumentBuilder.BuildDocument(sources);
         merged.SaveAs(outputPath);
     }
+
+    /// <summary>
+    /// Removes paragraphs [<paramref name="startIndex"/>, <paramref name="startIndex"/> +
+    /// <paramref name="count"/>) from <paramref name="docxPath"/>, writing the result to
+    /// <paramref name="outputPath"/> (which may be the same path, to edit in place).
+    /// </summary>
+    public void RemoveParagraphs(string docxPath, int startIndex, int count, string outputPath)
+    {
+        if (count <= 0)
+            throw new ArgumentOutOfRangeException(nameof(count), "Must remove at least one paragraph.");
+
+        var totalParagraphs = ListParagraphs(docxPath).Count;
+        if (startIndex < 0 || startIndex + count > totalParagraphs)
+        {
+            throw new ArgumentOutOfRangeException(nameof(startIndex),
+                $"Document has {totalParagraphs} paragraphs; can't remove [{startIndex}, {startIndex + count}).");
+        }
+
+        var target = new WmlDocument(docxPath);
+        var sources = new List<ISource>();
+
+        if (startIndex > 0)
+            sources.Add(new Source(target, 0, startIndex, keepSections: false));
+
+        var afterStart = startIndex + count;
+        var afterCount = totalParagraphs - afterStart;
+        if (afterCount > 0)
+            sources.Add(new Source(target, afterStart, afterCount, keepSections: true));
+
+        var merged = sources.Count > 0
+            ? DocumentBuilder.BuildDocument(sources)
+            : DocumentBuilder.BuildDocument([new Source(target, 0, 0, keepSections: true)]);
+        merged.SaveAs(outputPath);
+    }
+
+    /// <summary>
+    /// Removes paragraphs [<paramref name="startIndex"/>, <paramref name="startIndex"/> +
+    /// <paramref name="replacedCount"/>) from <paramref name="targetPath"/> and inserts paragraphs
+    /// [<paramref name="sourceStartIndex"/>, <paramref name="sourceStartIndex"/> +
+    /// <paramref name="sourceParagraphCount"/>) from <paramref name="sourcePath"/> in their place —
+    /// a clause swap in one step, rather than a separate remove then transplant.
+    /// </summary>
+    public void ReplaceParagraphs(
+        string sourcePath, int sourceStartIndex, int sourceParagraphCount,
+        string targetPath, int replacedStartIndex, int replacedCount,
+        string outputPath)
+    {
+        if (sourceParagraphCount <= 0)
+            throw new ArgumentOutOfRangeException(nameof(sourceParagraphCount), "Must copy at least one paragraph.");
+        if (replacedCount <= 0)
+            throw new ArgumentOutOfRangeException(nameof(replacedCount), "Must replace at least one paragraph.");
+
+        var targetParagraphCount = ListParagraphs(targetPath).Count;
+        if (replacedStartIndex < 0 || replacedStartIndex + replacedCount > targetParagraphCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(replacedStartIndex),
+                $"Target document has {targetParagraphCount} paragraphs; can't replace [{replacedStartIndex}, {replacedStartIndex + replacedCount}).");
+        }
+
+        var target = new WmlDocument(targetPath);
+        var source = new WmlDocument(sourcePath);
+        var sources = new List<ISource>();
+
+        if (replacedStartIndex > 0)
+            sources.Add(new Source(target, 0, replacedStartIndex, keepSections: false));
+
+        sources.Add(new Source(source, sourceStartIndex, sourceParagraphCount, keepSections: false));
+
+        var afterStart = replacedStartIndex + replacedCount;
+        var afterCount = targetParagraphCount - afterStart;
+        if (afterCount > 0)
+            sources.Add(new Source(target, afterStart, afterCount, keepSections: true));
+
+        var merged = DocumentBuilder.BuildDocument(sources);
+        merged.SaveAs(outputPath);
+    }
+
+    /// <summary>
+    /// Rewrites the numbering id of the first heading paragraph in the just-inserted range
+    /// [<paramref name="insertedStartIndex"/>, <paramref name="insertedStartIndex"/> +
+    /// <paramref name="insertedCount"/>) so it continues the numbering sequence of the nearest
+    /// preceding paragraph sharing the same heading style — e.g. a transplanted "Section 7" clause
+    /// picks up the target document's own section-numbering counter instead of arriving as an
+    /// independent (and visibly wrong) "Section 1". No-ops if the inserted range has no heading
+    /// paragraph, or no earlier paragraph shares its style.
+    /// </summary>
+    public void ContinueHeadingNumbering(string docxPath, int insertedStartIndex, int insertedCount)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var paragraphs = body.Elements<Paragraph>().ToList();
+
+        var rangeEnd = Math.Min(insertedStartIndex + insertedCount, paragraphs.Count);
+        for (var i = insertedStartIndex; i < rangeEnd; i++)
+        {
+            var candidate = paragraphs[i];
+            var styleId = candidate.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
+            var numPr = candidate.ParagraphProperties?.NumberingProperties;
+            if (styleId is null || numPr?.NumberingId is null)
+                continue;
+
+            var precedent = paragraphs.Take(insertedStartIndex).LastOrDefault(p =>
+                p.ParagraphProperties?.ParagraphStyleId?.Val?.Value == styleId &&
+                p.ParagraphProperties?.NumberingProperties?.NumberingId is not null);
+
+            if (precedent is null)
+                continue;
+
+            var precedentNumId = precedent.ParagraphProperties!.NumberingProperties!.NumberingId!.Val!.Value;
+            numPr.NumberingId!.Val = precedentNumId;
+            break;
+        }
+
+        doc.MainDocumentPart!.Document.Save();
+    }
 }

@@ -69,6 +69,51 @@ public static class SampleDocumentFactory
         ApplyPageDefaults(path);
     }
 
+    /// <summary>Adds a minimal single-level numbering definition (one <c>w:abstractNum</c> +
+    /// <c>w:num</c> pair) for <paramref name="numId"/> to an existing document — any paragraph
+    /// referencing a <c>w:numId</c> via <see cref="NumberingProperties"/> needs a matching
+    /// definition in the document's <see cref="NumberingDefinitionsPart"/>, or consumers that
+    /// validate document structure (e.g. Clippit's <c>DocumentBuilder</c>) reject it outright.</summary>
+    public static void AddNumberingDefinition(string path, int numId, NumberFormatValues? format = null)
+    {
+        using var doc = WordprocessingDocument.Open(path, isEditable: true);
+        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var numberingPart = mainPart.NumberingDefinitionsPart ?? mainPart.AddNewPart<NumberingDefinitionsPart>();
+        numberingPart.Numbering ??= new Numbering();
+
+        numberingPart.Numbering.AppendChild(new AbstractNum(
+            new Level(
+                new StartNumberingValue { Val = 1 },
+                new NumberingFormat { Val = format ?? NumberFormatValues.Decimal },
+                new LevelText { Val = "%1." })
+            { LevelIndex = 0 })
+        { AbstractNumberId = numId });
+        numberingPart.Numbering.AppendChild(new NumberingInstance(new AbstractNumId { Val = numId }) { NumberID = numId });
+        numberingPart.Numbering.Save();
+    }
+
+    /// <summary>Builds a document from caller-supplied paragraphs verbatim — for tests that need
+    /// precise control over run boundaries/formatting (e.g. simulating Word's habit of splitting a
+    /// single piece of text across several runs at spellcheck/revision boundaries).</summary>
+    public static void CreateDocumentFromParagraphs(string path, IEnumerable<Paragraph> paragraphs)
+    {
+        using (var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document))
+        {
+            var mainPart = doc.AddMainDocumentPart();
+            mainPart.Document = new Document(new Body());
+            var body = mainPart.Document.Body!;
+
+            foreach (var paragraph in paragraphs)
+                body.AppendChild(paragraph);
+
+            body.AppendChild(new SectionProperties());
+            AddMinimalStyles(mainPart);
+            mainPart.Document.Save();
+        }
+
+        ApplyPageDefaults(path);
+    }
+
     /// <summary>Appends plain paragraphs to an existing document, before its final section properties.</summary>
     public static void AppendParagraphs(string path, IEnumerable<string> paragraphs)
     {
