@@ -1,0 +1,107 @@
+using System.Globalization;
+using DocumentFormat.OpenXml.Packaging;
+using CustomProps = DocumentFormat.OpenXml.CustomProperties;
+using VT = DocumentFormat.OpenXml.VariantTypes;
+
+namespace DocumentProcessor.Core.Metadata;
+
+/// <summary>
+/// Reads and writes .docx document properties: the standard core set (title, author, subject —
+/// what Word's own File &gt; Info panel calls "Properties") and arbitrary named custom properties
+/// (what that panel's "Advanced Properties &gt; Custom" tab manages) — e.g. a matter number, contract
+/// value, or approval status a downstream system needs without parsing document content.
+/// </summary>
+public sealed class DocumentMetadataService
+{
+    // Fixed per the OOXML/COM custom-properties convention (every custom document property uses
+    // this exact format id — it identifies the "Summary Information"-style property set, not this
+    // specific property) and property ids below 2 are reserved.
+    private const string CustomPropertyFormatId = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}";
+    private const int FirstCustomPropertyId = 2;
+
+    public void SetCustomProperty(string docxPath, string name, string value) =>
+        SetCustomPropertyValue(docxPath, name, new VT.VTLPWSTR { Text = value });
+
+    public void SetCustomProperty(string docxPath, string name, bool value) =>
+        SetCustomPropertyValue(docxPath, name, new VT.VTBool { Text = value ? "true" : "false" });
+
+    public void SetCustomProperty(string docxPath, string name, int value) =>
+        SetCustomPropertyValue(docxPath, name, new VT.VTInt32 { Text = value.ToString(CultureInfo.InvariantCulture) });
+
+    public void SetCustomProperty(string docxPath, string name, double value) =>
+        SetCustomPropertyValue(docxPath, name, new VT.VTDouble { Text = value.ToString(CultureInfo.InvariantCulture) });
+
+    /// <summary>Word stores custom date properties as an ISO-8601 UTC filetime string.</summary>
+    public void SetCustomProperty(string docxPath, string name, DateTime value) =>
+        SetCustomPropertyValue(docxPath, name, new VT.VTFileTime { Text = value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture) });
+
+    /// <summary>Removes a custom property. No-ops (returns false) if it wasn't set.</summary>
+    public bool RemoveCustomProperty(string docxPath, string name)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var properties = doc.CustomFilePropertiesPart?.Properties;
+        var existing = properties?.Elements<CustomProps.CustomDocumentProperty>().FirstOrDefault(p => p.Name?.Value == name);
+        if (existing is null)
+            return false;
+
+        existing.Remove();
+        properties!.Save();
+        return true;
+    }
+
+    /// <summary>Lists every custom property's name and raw text value. Callers who know a property's
+    /// type can re-parse the text (e.g. <see cref="int.Parse(string)"/>) — the value is returned as
+    /// text rather than <see langword="object"/> since the OOXML variant-type tag doesn't always
+    /// round-trip losslessly to a single .NET type worth guessing at generically.</summary>
+    public IReadOnlyDictionary<string, string> GetCustomProperties(string docxPath)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
+        var properties = doc.CustomFilePropertiesPart?.Properties;
+        if (properties is null)
+            return new Dictionary<string, string>();
+
+        return properties.Elements<CustomProps.CustomDocumentProperty>()
+            .Where(p => p.Name?.Value is not null)
+            .ToDictionary(p => p.Name!.Value!, p => p.InnerText);
+    }
+
+    /// <summary>Sets one or more standard core properties (title/author/subject/keywords) — the same
+    /// values Word's File &gt; Info panel shows outside the "Custom" tab.</summary>
+    public void SetCoreProperties(string docxPath, string? title = null, string? author = null, string? subject = null, string? keywords = null)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+#pragma warning disable OOXML0001 // PackageProperties is marked experimental in the SDK but is the only supported way to set core properties.
+        var properties = doc.PackageProperties;
+        if (title is not null) properties.Title = title;
+        if (author is not null) properties.Creator = author;
+        if (subject is not null) properties.Subject = subject;
+        if (keywords is not null) properties.Keywords = keywords;
+#pragma warning restore OOXML0001
+    }
+
+    private void SetCustomPropertyValue(string docxPath, string name, DocumentFormat.OpenXml.OpenXmlElement valueElement)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var customPart = doc.CustomFilePropertiesPart ?? doc.AddNewPart<CustomFilePropertiesPart>();
+        customPart.Properties ??= new CustomProps.Properties();
+
+        customPart.Properties.Elements<CustomProps.CustomDocumentProperty>()
+            .FirstOrDefault(p => p.Name?.Value == name)?.Remove();
+
+        var nextId = customPart.Properties.Elements<CustomProps.CustomDocumentProperty>()
+            .Select(p => p.PropertyId?.Value ?? FirstCustomPropertyId - 1)
+            .DefaultIfEmpty(FirstCustomPropertyId - 1)
+            .Max() + 1;
+
+        var property = new CustomProps.CustomDocumentProperty
+        {
+            FormatId = CustomPropertyFormatId,
+            PropertyId = nextId,
+            Name = name
+        };
+        property.AppendChild(valueElement);
+
+        customPart.Properties.AppendChild(property);
+        customPart.Properties.Save();
+    }
+}
