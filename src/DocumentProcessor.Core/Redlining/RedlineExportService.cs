@@ -1,5 +1,8 @@
 using DocumentProcessor.Core.Conversion;
+using DocumentProcessor.Core.Diagnostics;
 using DocumentProcessor.Core.TrackChanges;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DocumentProcessor.Core.Redlining;
 
@@ -15,8 +18,10 @@ public sealed record RedlineExportPaths(string CleanDocx, string RedlinedDocx, s
 /// w:ins/w:del markup renders as Word itself would show it (underline/strikethrough), since that's
 /// standard OOXML any compliant renderer honors — this just wires up the previously-unexercised path.
 /// </summary>
-public sealed class RedlineExportService
+public sealed class RedlineExportService(ILogger<RedlineExportService>? logger = null)
 {
+    private readonly ILogger<RedlineExportService> _logger = logger ?? NullLogger<RedlineExportService>.Instance;
+
     public RedlineExportPaths ExportAllVariants(
         string originalPath,
         string revisedPath,
@@ -24,6 +29,10 @@ public sealed class RedlineExportService
         string authorForRevisions = "Document Comparison",
         WordToPdfConversionOptions? conversionOptions = null)
     {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("RedlineExportService.ExportAllVariants");
+        _logger.LogInformation("Exporting all four redline variants for {OriginalPath} vs {RevisedPath} into {OutputDirectory}",
+            originalPath, revisedPath, outputDirectory);
+
         Directory.CreateDirectory(outputDirectory);
 
         var redlinedDocx = Path.Combine(outputDirectory, "redlined.docx");
@@ -32,14 +41,19 @@ public sealed class RedlineExportService
         var cleanPdf = Path.Combine(outputDirectory, "clean.pdf");
 
         new DocumentComparisonService().Compare(originalPath, revisedPath, redlinedDocx, authorForRevisions);
+        _logger.LogDebug("Redlined DOCX written to {RedlinedDocx}", redlinedDocx);
 
         File.Copy(redlinedDocx, cleanDocx, overwrite: true);
         new TrackChangesService().AcceptAll(cleanDocx);
+        _logger.LogDebug("Clean DOCX written to {CleanDocx}", cleanDocx);
 
         var converter = new WordToPdfConverter(conversionOptions);
         converter.Convert(redlinedDocx, redlinedPdf);
+        _logger.LogDebug("Redlined PDF written to {RedlinedPdf}", redlinedPdf);
         converter.Convert(cleanDocx, cleanPdf);
+        _logger.LogDebug("Clean PDF written to {CleanPdf}", cleanPdf);
 
+        _logger.LogInformation("Finished exporting all four redline variants into {OutputDirectory}", outputDirectory);
         return new RedlineExportPaths(cleanDocx, redlinedDocx, cleanPdf, redlinedPdf);
     }
 }

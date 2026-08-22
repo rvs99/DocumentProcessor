@@ -2,6 +2,8 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentProcessor.Core.Samples;
 using DocumentProcessor.Core.Templating;
+using DocumentProcessor.Tests.Diagnostics;
+using Microsoft.Extensions.Logging;
 
 namespace DocumentProcessor.Tests.Templating;
 
@@ -94,6 +96,52 @@ public class TemplateEngineTests : IDisposable
         Assert.Equal("Hello {{Missing}}!", result.InnerText);
         var highlightedRun = result.Elements<Run>().First(r => r.InnerText == "{{Missing}}");
         Assert.NotNull(highlightedRun.RunProperties?.GetFirstChild<Highlight>());
+    }
+
+    [Fact]
+    public void Fill_with_Highlight_policy_returns_a_warning_for_the_unresolved_token()
+    {
+        SampleDocumentFactory.CreateDocumentFromParagraphs(_templatePath, [Literal("Hello {{Missing}}!")]);
+
+        var result = _sut.Fill(_templatePath, _outputPath, new Dictionary<string, object?>(), MissingTokenPolicy.Highlight);
+
+        Assert.Single(result.Warnings);
+        Assert.Contains("Missing", result.Warnings[0]);
+    }
+
+    [Fact]
+    public void Fill_with_no_missing_tokens_returns_no_warnings()
+    {
+        SampleDocumentFactory.CreateDocumentFromParagraphs(_templatePath, [Literal("Hello {{Name}}!")]);
+
+        var result = _sut.Fill(_templatePath, _outputPath, new Dictionary<string, object?> { ["Name"] = "World" }, MissingTokenPolicy.Highlight);
+
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Fill_logs_operation_start_and_completion()
+    {
+        SampleDocumentFactory.CreateDocumentFromParagraphs(_templatePath, [Literal("Hello {{Name}}!")]);
+        var logger = new CapturingLogger<TemplateEngine>();
+        var sut = new TemplateEngine(logger);
+
+        sut.Fill(_templatePath, _outputPath, new Dictionary<string, object?> { ["Name"] = "World" });
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("Filling template"));
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Information && e.Message.Contains("Filled template"));
+    }
+
+    [Fact]
+    public void Fill_logs_a_warning_when_tokens_are_highlighted()
+    {
+        SampleDocumentFactory.CreateDocumentFromParagraphs(_templatePath, [Literal("Hello {{Missing}}!")]);
+        var logger = new CapturingLogger<TemplateEngine>();
+        var sut = new TemplateEngine(logger);
+
+        sut.Fill(_templatePath, _outputPath, new Dictionary<string, object?>(), MissingTokenPolicy.Highlight);
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
     }
 
     [Fact]

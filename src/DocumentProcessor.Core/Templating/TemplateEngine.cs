@@ -2,9 +2,18 @@ using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.Diagnostics;
 using DocumentProcessor.Core.Transplant;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DocumentProcessor.Core.Templating;
+
+/// <summary>Result of <see cref="TemplateEngine.Fill"/>. <see cref="Warnings"/> is populated only
+/// under <see cref="MissingTokenPolicy.Highlight"/> — the one policy that leaves a structural trace
+/// (a highlighted run) in the output for a warning to be recovered from after the fact; Redact
+/// leaves nothing to detect, and Error throws instead of returning.</summary>
+public sealed record TemplateFillResult(IReadOnlyList<string> Warnings);
 
 /// <summary>
 /// Fills a .docx template's <c>{{token}}</c> markers from a data dictionary — scalar substitution,
@@ -22,8 +31,10 @@ namespace DocumentProcessor.Core.Templating;
 /// their own paragraph — the same convention mail-merge tools like docxtemplater use, and necessary
 /// because these operate on whole paragraph ranges, not inline text spans.
 /// </summary>
-public sealed class TemplateEngine
+public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
 {
+    private readonly ILogger<TemplateEngine> _logger = logger ?? NullLogger<TemplateEngine>.Instance;
+
     private static readonly Regex InlineTokenPattern = new(@"\{\{(html:)?([A-Za-z0-9_.]+)\}\}", RegexOptions.Compiled);
     private static readonly Regex IfPattern = new(@"^\{\{if:(.+)\}\}$", RegexOptions.Compiled);
     private static readonly Regex ElsePattern = new(@"^\{\{else\}\}$", RegexOptions.Compiled);
@@ -38,13 +49,17 @@ public sealed class TemplateEngine
     /// <see cref="IEnumerable{T}"/> of <c>IReadOnlyDictionary&lt;string, object?&gt;</c> — one
     /// dictionary per row/item.
     /// </summary>
-    public void Fill(
+    public TemplateFillResult Fill(
         string templatePath,
         string outputPath,
         IReadOnlyDictionary<string, object?> data,
         MissingTokenPolicy missingTokenPolicy = MissingTokenPolicy.Error,
         ClauseLibrary? clauseLibrary = null)
     {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TemplateEngine.Fill");
+        activity?.SetTag("missingTokenPolicy", missingTokenPolicy.ToString());
+        _logger.LogDebug("Filling template {TemplatePath} -> {OutputPath} (policy={Policy})", templatePath, outputPath, missingTokenPolicy);
+
         File.Copy(templatePath, outputPath, overwrite: true);
 
         using (var doc = WordprocessingDocument.Open(outputPath, isEditable: true))
@@ -66,6 +81,38 @@ public sealed class TemplateEngine
 
         if (clauseLibrary is not null)
             ResolveClauseMarkers(outputPath, clauseLibrary, data, missingTokenPolicy);
+
+        var warnings = missingTokenPolicy == MissingTokenPolicy.Highlight
+            ? FindHighlightWarnings(outputPath)
+            : [];
+
+        if (warnings.Count > 0)
+            _logger.LogWarning("Fill of {OutputPath} left {Count} unresolved reference(s) highlighted: {Warnings}", outputPath, warnings.Count, warnings);
+        else
+            _logger.LogInformation("Filled template {TemplatePath} -> {OutputPath}", templatePath, outputPath);
+
+        return new TemplateFillResult(warnings);
+    }
+
+    private static IReadOnlyList<string> FindHighlightWarnings(string docxPath)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
+        var body = doc.MainDocumentPart?.Document?.Body;
+        if (body is null)
+            return [];
+
+        var warnings = new List<string>();
+        foreach (var run in body.Descendants<Run>())
+        {
+            if (run.RunProperties?.GetFirstChild<Highlight>() is null)
+                continue;
+
+            var text = string.Concat(run.Elements<Text>().Select(t => t.Text));
+            if (text.StartsWith("{{", StringComparison.Ordinal) || text.StartsWith("[Missing clause:", StringComparison.Ordinal))
+                warnings.Add($"Unresolved template reference left visible: '{text}'");
+        }
+
+        return warnings;
     }
 
     // ---- Block structure parsing -------------------------------------------------------------

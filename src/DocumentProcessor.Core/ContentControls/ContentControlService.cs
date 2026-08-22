@@ -1,7 +1,10 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.Diagnostics;
 using DocumentProcessor.Core.Templating;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using OoxmlLock = DocumentFormat.OpenXml.Wordprocessing.Lock;
 
 namespace DocumentProcessor.Core.ContentControls;
@@ -25,8 +28,10 @@ public enum ContentControlLockMode
 /// Reads and replaces the values of Word content controls (structured document tags, w:sdt)
 /// identified by their tag — the standard mechanism for template-driven contract assembly.
 /// </summary>
-public sealed class ContentControlService
+public sealed class ContentControlService(ILogger<ContentControlService>? logger = null)
 {
+    private readonly ILogger<ContentControlService> _logger = logger ?? NullLogger<ContentControlService>.Instance;
+
     /// <summary>
     /// Replaces the text content of every content control matching <paramref name="tag"/>
     /// with <paramref name="newValue"/>, preserving the run formatting of the first existing run.
@@ -34,6 +39,7 @@ public sealed class ContentControlService
     /// <returns>The number of content controls updated.</returns>
     public int ReplaceByTag(string docxPath, string tag, string newValue)
     {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("ContentControlService.ReplaceByTag");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         var document = RequireDocument(doc);
 
@@ -51,6 +57,11 @@ public sealed class ContentControlService
         if (updated > 0)
             document.Save();
 
+        if (updated == 0)
+            _logger.LogWarning("ReplaceByTag found no content control tagged {Tag} in {DocxPath}", tag, docxPath);
+        else
+            _logger.LogDebug("Replaced {Count} content control(s) tagged {Tag} in {DocxPath}", updated, tag, docxPath);
+
         return updated;
     }
 
@@ -60,6 +71,7 @@ public sealed class ContentControlService
     /// </summary>
     public IReadOnlyDictionary<string, int> ReplaceMany(string docxPath, IReadOnlyDictionary<string, string> tagToValue)
     {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("ContentControlService.ReplaceMany");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         var document = RequireDocument(doc);
 
@@ -75,6 +87,12 @@ public sealed class ContentControlService
         }
 
         document.Save();
+
+        var unmatchedTags = counts.Where(kv => kv.Value == 0).Select(kv => kv.Key).ToList();
+        if (unmatchedTags.Count > 0)
+            _logger.LogWarning("ReplaceMany found no content control for tag(s) {Tags} in {DocxPath}", unmatchedTags, docxPath);
+        _logger.LogDebug("ReplaceMany updated {Count} tag(s) in {DocxPath}", counts.Count - unmatchedTags.Count, docxPath);
+
         return counts;
     }
 

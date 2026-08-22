@@ -2,6 +2,8 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentProcessor.Core.Redlining;
 using DocumentProcessor.Core.Samples;
+using DocumentProcessor.Tests.Diagnostics;
+using Microsoft.Extensions.Logging;
 
 namespace DocumentProcessor.Tests.Redlining;
 
@@ -38,6 +40,17 @@ public class DocumentComparisonServiceTests : IDisposable
 
         Assert.True(summary.InsertedCount > 0);
         Assert.Contains(summary.InsertedText, t => t.Contains("new", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Compare_logs_the_insertion_and_deletion_counts()
+    {
+        var logger = new CapturingLogger<DocumentComparisonService>();
+        var sut = new DocumentComparisonService(logger);
+
+        sut.Compare(_originalPath, _revisedPath, _outputPath);
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Information && e.Message.Contains("insertion"));
     }
 
     [Fact]

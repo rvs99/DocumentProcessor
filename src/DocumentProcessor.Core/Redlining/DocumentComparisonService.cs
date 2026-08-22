@@ -3,6 +3,9 @@ using Clippit;
 using Clippit.Word;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DocumentProcessor.Core.Redlining;
 
@@ -36,8 +39,9 @@ public sealed record ComparisonSummary(
 /// standard Word tracked changes (w:ins/w:del), openable and reviewable in Word itself — via
 /// Clippit's WmlComparer, a maintained fork of Open-Xml-PowerTools' comparison engine.
 /// </summary>
-public sealed class DocumentComparisonService
+public sealed class DocumentComparisonService(ILogger<DocumentComparisonService>? logger = null)
 {
+    private readonly ILogger<DocumentComparisonService> _logger = logger ?? NullLogger<DocumentComparisonService>.Instance;
     private static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
     /// <summary>
@@ -67,9 +71,12 @@ public sealed class DocumentComparisonService
             deleted.Select(r => r.Text).ToList());
     }
 
-    private static (List<WmlComparer.WmlComparerRevision> Inserted, List<WmlComparer.WmlComparerRevision> Deleted) CompareCore(
+    private (List<WmlComparer.WmlComparerRevision> Inserted, List<WmlComparer.WmlComparerRevision> Deleted) CompareCore(
         string originalPath, string revisedPath, string outputRedlinedPath, string authorForRevisions)
     {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("DocumentComparisonService.Compare");
+        _logger.LogDebug("Comparing {OriginalPath} against {RevisedPath} -> {OutputPath}", originalPath, revisedPath, outputRedlinedPath);
+
         var settings = new WmlComparerSettings { AuthorForRevisions = authorForRevisions };
 
         var redlined = WmlComparer.Compare(new WmlDocument(originalPath), new WmlDocument(revisedPath), settings);
@@ -78,6 +85,8 @@ public sealed class DocumentComparisonService
         var revisions = WmlComparer.GetRevisions(redlined, settings);
         var inserted = revisions.Where(r => r.RevisionType == WmlComparer.WmlComparerRevisionType.Inserted).ToList();
         var deleted = revisions.Where(r => r.RevisionType == WmlComparer.WmlComparerRevisionType.Deleted).ToList();
+        _logger.LogInformation("Comparison of {OriginalPath} vs {RevisedPath} found {InsertedCount} insertion(s), {DeletedCount} deletion(s)",
+            originalPath, revisedPath, inserted.Count, deleted.Count);
         return (inserted, deleted);
     }
 

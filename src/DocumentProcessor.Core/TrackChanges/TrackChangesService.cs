@@ -1,6 +1,9 @@
 using Clippit.Word;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DocumentProcessor.Core.TrackChanges;
 
@@ -19,13 +22,17 @@ public sealed record TrackedChange(string? ChangeId, string? Author, DateTime? D
 /// Scope: covers run-level insertions/deletions, which is the vast majority of real-world tracked
 /// changes. Paragraph-mark and formatting-change revisions (pPrChange/rPrChange) are left as-is.
 /// </summary>
-public sealed class TrackChangesService
+public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = null)
 {
+    private readonly ILogger<TrackChangesService> _logger = logger ?? NullLogger<TrackChangesService>.Instance;
+
     /// <summary>Accepts every tracked change: inserted text is kept, deleted text is discarded.</summary>
     public void AcceptAll(string docxPath)
     {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TrackChangesService.AcceptAll");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         RevisionAccepter.AcceptRevisions(doc);
+        _logger.LogInformation("Accepted all tracked changes in {DocxPath}", docxPath);
     }
 
     /// <summary>Accepts only the tracked changes made by <paramref name="author"/> (an exact match
@@ -84,38 +91,52 @@ public sealed class TrackChangesService
         return changes;
     }
 
-    private static void AcceptWhere(string docxPath, Func<string?, string?, bool> matches)
+    private void AcceptWhere(string docxPath, Func<string?, string?, bool> matches)
     {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TrackChangesService.AcceptWhere");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+        var resolvedCount = 0;
 
         // Accepting an insertion keeps its content — unwrap the w:ins wrapper in place.
         foreach (var insertedRun in document.Descendants<InsertedRun>().ToList())
         {
             if (matches(insertedRun.Id?.Value, insertedRun.Author?.Value))
+            {
                 UnwrapInPlace(insertedRun);
+                resolvedCount++;
+            }
         }
 
         // Accepting a deletion confirms it — the deleted content goes away entirely.
         foreach (var deletedRun in document.Descendants<DeletedRun>().ToList())
         {
             if (matches(deletedRun.Id?.Value, deletedRun.Author?.Value))
+            {
                 deletedRun.Remove();
+                resolvedCount++;
+            }
         }
 
         document.Save();
+        _logger.LogInformation("Accepted {Count} tracked change(s) in {DocxPath}", resolvedCount, docxPath);
     }
 
-    private static void RejectWhere(string docxPath, Func<string?, string?, bool> matches)
+    private void RejectWhere(string docxPath, Func<string?, string?, bool> matches)
     {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TrackChangesService.RejectWhere");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+        var resolvedCount = 0;
 
         // Rejecting an insertion undoes it — the inserted content goes away entirely.
         foreach (var insertedRun in document.Descendants<InsertedRun>().ToList())
         {
             if (matches(insertedRun.Id?.Value, insertedRun.Author?.Value))
+            {
                 insertedRun.Remove();
+                resolvedCount++;
+            }
         }
 
         // Rejecting a deletion restores it — unwrap the w:del wrapper, turning w:delText back into w:t.
@@ -126,7 +147,10 @@ public sealed class TrackChangesService
 
             RestoreDeletedText(deletedRun);
             UnwrapInPlace(deletedRun);
+            resolvedCount++;
         }
+
+        _logger.LogInformation("Rejected {Count} tracked change(s) in {DocxPath}", resolvedCount, docxPath);
 
         document.Save();
     }

@@ -1,7 +1,10 @@
 using Clippit.Word;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.Diagnostics;
 using DocumentProcessor.Core.DocumentAssembly;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DocumentProcessor.Core.Transplant;
 
@@ -14,8 +17,10 @@ public sealed record ParagraphInfo(int Index, string Text);
 /// so the transplanted content doesn't collide with or inherit the target's styles — the piece that
 /// is otherwise unsolved hand-rolled work in comparable free tooling.
 /// </summary>
-public sealed class ClauseTransplantService
+public sealed class ClauseTransplantService(ILogger<ClauseTransplantService>? logger = null)
 {
+    private readonly ILogger<ClauseTransplantService> _logger = logger ?? NullLogger<ClauseTransplantService>.Instance;
+
     /// <summary>Lists every top-level paragraph in the document with its index, for locating a clause to transplant.</summary>
     public IReadOnlyList<ParagraphInfo> ListParagraphs(string docxPath)
     {
@@ -64,6 +69,8 @@ public sealed class ClauseTransplantService
 
         var merged = DocumentBuilder.BuildDocument(sources);
         merged.SaveAs(outputPath);
+        _logger.LogInformation("Transplanted {Count} paragraph(s) from {SourcePath} into {TargetPath} -> {OutputPath}",
+            paragraphCount, sourcePath, targetPath, outputPath);
     }
 
     /// <summary>
@@ -160,6 +167,13 @@ public sealed class ClauseTransplantService
         var newlyDangling = referencesOutsideRange.Where(r => removedBookmarks.Contains(r.BookmarkName)).ToList();
 
         RemoveParagraphs(docxPath, startIndex, count, outputPath);
+
+        if (newlyDangling.Count > 0)
+        {
+            _logger.LogWarning(
+                "Removing paragraphs [{Start}, {End}) from {DocxPath} left {Count} reference(s) dangling: {References}",
+                startIndex, startIndex + count, docxPath, newlyDangling.Count, newlyDangling.Select(r => r.BookmarkName));
+        }
 
         return newlyDangling;
     }
