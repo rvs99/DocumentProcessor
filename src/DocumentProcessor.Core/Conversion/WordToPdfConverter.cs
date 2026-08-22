@@ -25,6 +25,14 @@ public sealed class WordToPdfConversionOptions
     public string? UseWslDistro { get; init; }
 
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(120);
+
+    /// <summary>
+    /// How long to wait for a free conversion slot before giving up. Conversions are capped
+    /// process-wide (see <c>DOCPROC_MAX_CONCURRENT_CONVERSIONS</c>) so a burst of requests can't
+    /// spawn an unbounded number of LibreOffice processes. Failing fast here is deliberate: under
+    /// saturation it is better to shed load than to queue every request until it times out anyway.
+    /// </summary>
+    public TimeSpan QueueTimeout { get; init; } = TimeSpan.FromSeconds(60);
 }
 
 /// <summary>
@@ -47,114 +55,11 @@ public sealed class WordToPdfConverter
         if (!File.Exists(docxPath))
             throw new FileNotFoundException("Input .docx file not found.", docxPath);
 
-        var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPdfPath))
-            ?? throw new ArgumentException("Output path has no directory component.", nameof(outputPdfPath));
-        Directory.CreateDirectory(outputDir);
-
-        // Isolating each conversion in its own LibreOffice user profile is what makes concurrent
-        // server-side conversions safe — sharing the default profile causes conversions to hang
-        // or fail under concurrency.
-        var profileArg = _options.UseWslDistro is not null
-            ? $"file:///tmp/docproc-lo-profile-{Guid.NewGuid():N}"
-            : $"file:///{Path.Combine(Path.GetTempPath(), $"docproc-lo-profile-{Guid.NewGuid():N}").Replace('\\', '/')}";
-
-        var (fileName, args) = BuildInvocation(docxPath, outputDir, profileArg);
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = fileName,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Failed to start conversion process '{fileName}'.");
-
-        var stdOutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stdErrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        using var timeoutCts = new CancellationTokenSource(_options.Timeout);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-        try
-        {
-            await process.WaitForExitAsync(linkedCts.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            TryKill(process);
-            throw new TimeoutException(
-                $"LibreOffice conversion of '{docxPath}' did not complete within {_options.Timeout}.");
-        }
-
-        var stdOut = await stdOutTask;
-        var stdErr = await stdErrTask;
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"LibreOffice conversion failed (exit code {process.ExitCode}).\nstdout: {stdOut}\nstderr: {stdErr}");
-        }
-
-        // soffice names the output after the input's base name, inside --outdir.
-        var producedPath = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(docxPath) + ".pdf");
-        if (!File.Exists(producedPath))
-        {
-            throw new InvalidOperationException(
-                $"LibreOffice reported success but no PDF was produced at '{producedPath}'.\nstdout: {stdOut}\nstderr: {stdErr}");
-        }
-
-        if (!string.Equals(Path.GetFullPath(producedPath), Path.GetFullPath(outputPdfPath), StringComparison.OrdinalIgnoreCase))
-            File.Move(producedPath, outputPdfPath, overwrite: true);
-    }
-
-    private (string fileName, List<string> args) BuildInvocation(string docxPath, string outputDir, string profileArg)
-    {
-        var args = new List<string>();
-        string fileName;
-        string effectiveDocxPath;
-        string effectiveOutDir;
-
-        if (_options.UseWslDistro is { } distro)
-        {
-            fileName = "wsl.exe";
-            args.AddRange(["-d", distro, "--", "soffice"]);
-            effectiveDocxPath = ToWslPath(docxPath);
-            effectiveOutDir = ToWslPath(outputDir);
-        }
-        else
-        {
-            fileName = _options.ExecutablePath;
-            effectiveDocxPath = docxPath;
-            effectiveOutDir = outputDir;
-        }
-
-        args.AddRange([
-            "--headless",
-            "--norestore",
-            $"-env:UserInstallation={profileArg}",
-            "--convert-to", "pdf",
-            "--outdir", effectiveOutDir,
-            effectiveDocxPath
-        ]);
-
-        return (fileName, args);
-    }
-
-    private static string ToWslPath(string windowsPath)
-    {
-        var full = Path.GetFullPath(windowsPath);
-        var drive = char.ToLowerInvariant(full[0]);
-        var rest = full[2..].Replace('\\', '/');
-        return $"/mnt/{drive}{rest}";
-    }
-
-    private static void TryKill(Process process)
-    {
-        try { process.Kill(entireProcessTree: true); }
-        catch { /* best-effort: process may have already exited */ }
+        await LibreOfficeRunner.ConvertAsync(
+            new LibreOfficeSettings(_options.ExecutablePath, _options.UseWslDistro, _options.Timeout, _options.QueueTimeout),
+            docxPath,
+            targetExtension: "pdf",
+            finalOutputPath: outputPdfPath,
+            cancellationToken).ConfigureAwait(false);
     }
 }

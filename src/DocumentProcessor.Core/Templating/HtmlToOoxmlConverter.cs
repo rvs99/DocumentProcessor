@@ -7,6 +7,13 @@ using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace DocumentProcessor.Core.Templating;
 
+/// <summary>
+/// An HTML fragment was rejected before processing because it was too large or too deeply nested.
+/// Distinct from a malformed-content error: the fragment may be perfectly well-formed, it is simply
+/// beyond the bounds this converter will walk without risking the host process.
+/// </summary>
+public sealed class HtmlTooComplexException(string message) : InvalidOperationException(message);
+
 public sealed record HtmlConversionOptions
 {
     /// <summary>Render <c>&lt;a href&gt;</c> as underlined/colored text with the URL appended in
@@ -39,13 +46,42 @@ public static class HtmlToOoxmlConverter
         "script", "style", "iframe", "object", "embed", "form", "input", "button", "svg", "textarea", "select"
     };
 
+    /// <summary>
+    /// Maximum element nesting this converter will walk. Both the sanitizer and the OOXML builder
+    /// recurse once per level, so without a cap a deeply nested fragment exhausts the thread stack —
+    /// and <see cref="StackOverflowException"/> cannot be caught in .NET, so the whole process dies.
+    /// In a multi-tenant host that is one tenant's malformed rich-text field terminating every other
+    /// tenant's in-flight request. 100 is far beyond any realistic authored document (Word itself
+    /// caps nesting well below this) while staying far below the ~1 MB default stack.
+    /// </summary>
+    public const int MaxNestingDepth = 100;
+
+    /// <summary>Maximum input length accepted, in characters. Rich-text field values are prose, not
+    /// documents; anything larger is a payload rather than content.</summary>
+    public const int MaxInputLength = 1024 * 1024;
+
     /// <summary>Sanitizes an HTML fragment down to the allow-listed tags/attributes and returns it as
     /// an HTML string, without converting to OOXML. Used for item 33's standalone sanitization need.</summary>
+    /// <exception cref="HtmlTooComplexException">The fragment is longer than
+    /// <see cref="MaxInputLength"/> or nested deeper than <see cref="MaxNestingDepth"/>.</exception>
     public static string Sanitize(string html)
     {
+        GuardInputLength(html);
         var document = ParseFragment(html);
-        SanitizeSubtree(document.Body!);
+        SanitizeSubtree(document.Body!, depth: 0);
         return document.Body!.InnerHtml;
+    }
+
+    private static void GuardInputLength(string html)
+    {
+        if (html.Length > MaxInputLength)
+            throw new HtmlTooComplexException($"HTML fragment is {html.Length:N0} characters; the limit is {MaxInputLength:N0}.");
+    }
+
+    private static void GuardDepth(int depth)
+    {
+        if (depth > MaxNestingDepth)
+            throw new HtmlTooComplexException($"HTML nesting exceeds the maximum depth of {MaxNestingDepth}.");
     }
 
     /// <summary>
@@ -57,13 +93,14 @@ public static class HtmlToOoxmlConverter
     public static IReadOnlyList<Paragraph> ConvertFragment(MainDocumentPart mainPart, string html, HtmlConversionOptions? options = null)
     {
         options ??= new HtmlConversionOptions();
+        GuardInputLength(html);
         var document = ParseFragment(html);
-        SanitizeSubtree(document.Body!);
+        SanitizeSubtree(document.Body!, depth: 0);
 
         var state = new ConversionState(mainPart, options);
         var paragraphs = new List<Paragraph>();
         foreach (var child in document.Body!.ChildNodes)
-            WalkBlock(child, state, paragraphs, listLevel: null);
+            WalkBlock(child, state, paragraphs, listLevel: null, depth: 0);
 
         if (paragraphs.Count == 0)
             paragraphs.Add(new Paragraph());
@@ -77,8 +114,10 @@ public static class HtmlToOoxmlConverter
         return parser.ParseDocument($"<!doctype html><html><body>{html}</body></html>");
     }
 
-    private static void SanitizeSubtree(INode node)
+    private static void SanitizeSubtree(INode node, int depth)
     {
+        GuardDepth(depth);
+
         foreach (var child in node.ChildNodes.ToList())
         {
             if (child is not IElement element)
@@ -94,7 +133,7 @@ public static class HtmlToOoxmlConverter
             {
                 // Unknown/disallowed tag: unwrap it (keep children, drop the wrapper) rather than
                 // dropping content the caller probably still wants shown.
-                SanitizeSubtree(element);
+                SanitizeSubtree(element, depth + 1);
                 foreach (var grandchild in element.ChildNodes.ToList())
                     element.Parent!.InsertBefore(grandchild, element);
                 element.Remove();
@@ -114,7 +153,7 @@ public static class HtmlToOoxmlConverter
                 element.RemoveAttribute(attrName);
             }
 
-            SanitizeSubtree(element);
+            SanitizeSubtree(element, depth + 1);
         }
     }
 
@@ -136,8 +175,10 @@ public static class HtmlToOoxmlConverter
 
     private sealed record ListContext(int NumId, int Level);
 
-    private static void WalkBlock(INode node, ConversionState state, List<Paragraph> output, ListContext? listLevel)
+    private static void WalkBlock(INode node, ConversionState state, List<Paragraph> output, ListContext? listLevel, int depth)
     {
+        GuardDepth(depth);
+
         if (node is IText textNode)
         {
             if (!string.IsNullOrWhiteSpace(textNode.Text))
@@ -152,12 +193,12 @@ public static class HtmlToOoxmlConverter
         {
             case "p":
             case "div":
-                output.Add(BuildParagraph(element, state, listLevel));
+                output.Add(BuildParagraph(element, state, listLevel, depth));
                 break;
 
             case "h1": case "h2": case "h3": case "h4": case "h5": case "h6":
                 var level = element.TagName[1] - '0';
-                output.Add(BuildParagraph(element, state, listLevel, headingStyleId: $"Heading{level}"));
+                output.Add(BuildParagraph(element, state, listLevel, depth, headingStyleId: $"Heading{level}"));
                 break;
 
             case "ul":
@@ -167,17 +208,17 @@ public static class HtmlToOoxmlConverter
                     : EnsureDecimalNumbering(state);
                 var nextLevel = new ListContext(numId, (listLevel?.Level ?? -1) + 1);
                 foreach (var child in element.Children.Where(c => c.TagName.Equals("li", StringComparison.OrdinalIgnoreCase)))
-                    output.Add(BuildParagraph(child, state, nextLevel));
+                    output.Add(BuildParagraph(child, state, nextLevel, depth + 1));
                 break;
 
             default:
                 // Bare inline content at block level (e.g. top-level "Hello <b>World</b>" with no <p>).
-                output.Add(BuildParagraph(element, state, listLevel));
+                output.Add(BuildParagraph(element, state, listLevel, depth));
                 break;
         }
     }
 
-    private static Paragraph BuildParagraph(IElement element, ConversionState state, ListContext? listLevel, string? headingStyleId = null)
+    private static Paragraph BuildParagraph(IElement element, ConversionState state, ListContext? listLevel, int depth, string? headingStyleId = null)
     {
         var properties = new ParagraphProperties();
         if (headingStyleId is not null)
@@ -193,7 +234,7 @@ public static class HtmlToOoxmlConverter
         if (properties.HasChildren)
             paragraph.AppendChild(properties);
 
-        foreach (var run in BuildInlineRuns(element, RunFormat.None, state))
+        foreach (var run in BuildInlineRuns(element, RunFormat.None, state, depth + 1))
             paragraph.AppendChild(run);
 
         return paragraph;
@@ -202,8 +243,10 @@ public static class HtmlToOoxmlConverter
     [Flags]
     private enum RunFormat { None = 0, Bold = 1, Italic = 2, Underline = 4 }
 
-    private static IEnumerable<Run> BuildInlineRuns(INode node, RunFormat format, ConversionState state)
+    private static IEnumerable<Run> BuildInlineRuns(INode node, RunFormat format, ConversionState state, int depth)
     {
+        GuardDepth(depth);
+
         foreach (var child in node.ChildNodes)
         {
             if (child is IText text)
@@ -223,23 +266,23 @@ public static class HtmlToOoxmlConverter
                     yield return new Run(new Break());
                     break;
                 case "b": case "strong":
-                    foreach (var run in BuildInlineRuns(element, format | RunFormat.Bold, state)) yield return run;
+                    foreach (var run in BuildInlineRuns(element, format | RunFormat.Bold, state, depth + 1)) yield return run;
                     break;
                 case "i": case "em":
-                    foreach (var run in BuildInlineRuns(element, format | RunFormat.Italic, state)) yield return run;
+                    foreach (var run in BuildInlineRuns(element, format | RunFormat.Italic, state, depth + 1)) yield return run;
                     break;
                 case "u":
-                    foreach (var run in BuildInlineRuns(element, format | RunFormat.Underline, state)) yield return run;
+                    foreach (var run in BuildInlineRuns(element, format | RunFormat.Underline, state, depth + 1)) yield return run;
                     break;
                 case "a":
                     var href = element.GetAttribute("href");
-                    foreach (var run in BuildInlineRuns(element, format | RunFormat.Underline, state)) yield return run;
+                    foreach (var run in BuildInlineRuns(element, format | RunFormat.Underline, state, depth + 1)) yield return run;
                     if (state.Options.RenderHyperlinkUrls && !string.IsNullOrEmpty(href))
                         foreach (var run in BuildRuns($" ({href})", format))
                             yield return run;
                     break;
                 default:
-                    foreach (var run in BuildInlineRuns(element, format, state)) yield return run;
+                    foreach (var run in BuildInlineRuns(element, format, state, depth + 1)) yield return run;
                     break;
             }
         }
