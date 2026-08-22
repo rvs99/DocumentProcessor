@@ -116,5 +116,56 @@ public class HeaderFooterServiceTests : IDisposable
         Assert.False(removed);
     }
 
+    [Fact]
+    public void SetHeaderContent_lays_out_text_and_fields_in_order()
+    {
+        _sut.SetHeaderContent(_path,
+        [
+            new TextPart("Acme Corp — Page "),
+            new FieldPart(HeaderFooterFieldType.PageNumber),
+            new TextPart(" of "),
+            new FieldPart(HeaderFooterFieldType.TotalPages)
+        ]);
+
+        using var doc = WordprocessingDocument.Open(_path, isEditable: false);
+        var sectPr = doc.MainDocumentPart!.Document!.Body!.Elements<SectionProperties>().Single();
+        var headerPart = (HeaderPart)doc.MainDocumentPart!.GetPartById(sectPr.Elements<HeaderReference>().Single().Id!);
+
+        Assert.Contains("Acme Corp", headerPart.Header!.InnerText);
+        var fields = headerPart.Header!.Descendants<SimpleField>().ToList();
+        Assert.Equal(2, fields.Count);
+        Assert.Equal("PAGE", fields[0].Instruction!.Value!.Trim());
+        Assert.Equal("NUMPAGES", fields[1].Instruction!.Value!.Trim());
+    }
+
+    [Fact]
+    public void SetFooterContent_resolves_tokens_from_the_supplied_data()
+    {
+        _sut.SetFooterContent(_path, [new TextPart("Prepared for {{Client.Name}}")],
+            new Dictionary<string, object?> { ["Client"] = new Dictionary<string, object?> { ["Name"] = "Acme Corp" } });
+
+        using var doc = WordprocessingDocument.Open(_path, isEditable: false);
+        var sectPr = doc.MainDocumentPart!.Document!.Body!.Elements<SectionProperties>().Single();
+        var footerPart = (FooterPart)doc.MainDocumentPart!.GetPartById(sectPr.Elements<FooterReference>().Single().Id!);
+
+        Assert.Contains("Prepared for Acme Corp", footerPart.Footer!.InnerText);
+    }
+
+    [Fact]
+    public void SetHeaderContent_with_logo_embeds_an_image_part_referenced_by_a_drawing()
+    {
+        // A minimal valid 1x1 PNG, just enough to be a real image file the ImagePart accepts.
+        var pngBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+
+        _sut.SetHeaderContent(_path, [new LogoPart(pngBytes, 100, 40)]);
+
+        using var doc = WordprocessingDocument.Open(_path, isEditable: false);
+        var sectPr = doc.MainDocumentPart!.Document!.Body!.Elements<SectionProperties>().Single();
+        var headerPart = (HeaderPart)doc.MainDocumentPart!.GetPartById(sectPr.Elements<HeaderReference>().Single().Id!);
+
+        Assert.Single(headerPart.ImageParts);
+        Assert.Single(headerPart.Header!.Descendants<Drawing>());
+    }
+
     public void Dispose() => File.Delete(_path);
 }
