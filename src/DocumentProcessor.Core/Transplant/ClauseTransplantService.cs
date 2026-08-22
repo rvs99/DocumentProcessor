@@ -1,6 +1,7 @@
 using Clippit.Word;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.DocumentAssembly;
 
 namespace DocumentProcessor.Core.Transplant;
 
@@ -139,6 +140,67 @@ public sealed class ClauseTransplantService
 
         var merged = DocumentBuilder.BuildDocument(sources);
         merged.SaveAs(outputPath);
+    }
+
+    /// <summary>
+    /// Removes paragraphs [<paramref name="startIndex"/>, <paramref name="startIndex"/> +
+    /// <paramref name="count"/>), same as <see cref="RemoveParagraphs"/>, but first checks whether
+    /// any bookmark defined inside that range is still referenced by a REF/PAGEREF field elsewhere
+    /// in the document. Matches how Word itself behaves when you delete bookmarked content — the
+    /// reference isn't rewritten or deleted automatically (there's no single correct replacement
+    /// text to substitute), it's left in place to show "Error! Reference source not found." on the
+    /// next field update. This just surfaces that outcome up front as a warning list, rather than
+    /// leaving the caller to discover it only when someone opens the document in Word.
+    /// </summary>
+    /// <returns>Every reference that pointed into the removed range and is now dangling.</returns>
+    public IReadOnlyList<DanglingReference> RemoveParagraphsWithCrossReferenceCleanup(string docxPath, int startIndex, int count, string outputPath)
+    {
+        var removedBookmarks = GetBookmarkNamesInRange(docxPath, startIndex, count);
+        var referencesOutsideRange = GetReferencesOutsideRange(docxPath, startIndex, count);
+        var newlyDangling = referencesOutsideRange.Where(r => removedBookmarks.Contains(r.BookmarkName)).ToList();
+
+        RemoveParagraphs(docxPath, startIndex, count, outputPath);
+
+        return newlyDangling;
+    }
+
+    private static HashSet<string> GetBookmarkNamesInRange(string docxPath, int startIndex, int count)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var paragraphs = body.Elements<Paragraph>().ToList();
+        var rangeEnd = Math.Min(startIndex + count, paragraphs.Count);
+
+        var names = new HashSet<string>();
+        for (var i = startIndex; i < rangeEnd; i++)
+        {
+            foreach (var bookmark in paragraphs[i].Descendants<BookmarkStart>())
+            {
+                if (bookmark.Name?.Value is { } name)
+                    names.Add(name);
+            }
+        }
+
+        return names;
+    }
+
+    private static IReadOnlyList<DanglingReference> GetReferencesOutsideRange(string docxPath, int startIndex, int count)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var paragraphs = body.Elements<Paragraph>().ToList();
+        var rangeEnd = Math.Min(startIndex + count, paragraphs.Count);
+
+        var references = new List<DanglingReference>();
+        for (var i = 0; i < paragraphs.Count; i++)
+        {
+            if (i >= startIndex && i < rangeEnd)
+                continue; // inside the range being removed — not "elsewhere"
+
+            references.AddRange(CrossReferenceValidator.FindReferences(paragraphs[i]));
+        }
+
+        return references;
     }
 
     /// <summary>

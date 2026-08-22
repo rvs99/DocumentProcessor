@@ -1,3 +1,4 @@
+using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentProcessor.Core.Samples;
 using DocumentProcessor.Core.Transplant;
 
@@ -63,6 +64,65 @@ public class ClauseTransplantServiceTests : IDisposable
     {
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             _sut.TransplantParagraphs(_sourcePath, 0, 1, _targetPath, 999, _outputPath));
+    }
+
+    [Fact]
+    public void RemoveParagraphs_removes_the_given_range_and_keeps_the_rest()
+    {
+        _sut.RemoveParagraphs(_targetPath, startIndex: 1, count: 1, _outputPath);
+
+        var texts = _sut.ListParagraphs(_outputPath).Select(p => p.Text).ToList();
+        Assert.DoesNotContain(texts, t => t.Contains("Parties: Acme Corp"));
+        Assert.Contains(texts, t => t.Contains("Term: Twelve months"));
+    }
+
+    [Fact]
+    public void ReplaceParagraphs_swaps_the_target_range_for_the_source_range()
+    {
+        var governingLawIndex = _sut.ListParagraphs(_sourcePath).Single(p => p.Text.Contains("Governing Law")).Index;
+
+        _sut.ReplaceParagraphs(
+            sourcePath: _sourcePath, sourceStartIndex: governingLawIndex, sourceParagraphCount: 1,
+            targetPath: _targetPath, replacedStartIndex: 1, replacedCount: 1,
+            outputPath: _outputPath);
+
+        var texts = _sut.ListParagraphs(_outputPath).Select(p => p.Text).ToList();
+        Assert.DoesNotContain(texts, t => t.Contains("Parties: Acme Corp"));
+        Assert.Contains(texts, t => t.Contains("Governing Law"));
+        Assert.Contains(texts, t => t.Contains("Term: Twelve months"));
+    }
+
+    [Fact]
+    public void RemoveParagraphsWithCrossReferenceCleanup_reports_a_reference_that_becomes_dangling()
+    {
+        var path = TestFiles.NewTempPath(".docx");
+        try
+        {
+            SampleDocumentFactory.CreateDocumentFromParagraphs(path,
+            [
+                new Paragraph(new BookmarkStart { Id = "1", Name = "_Ref100" }, new Run(new Text("Target clause.")), new BookmarkEnd { Id = "1" }),
+                new Paragraph(new SimpleField(new Run(new Text("Target clause"))) { Instruction = " REF _Ref100 \\h " })
+            ]);
+
+            var warnings = _sut.RemoveParagraphsWithCrossReferenceCleanup(path, startIndex: 0, count: 1, path);
+
+            Assert.Single(warnings);
+            Assert.Equal("_Ref100", warnings[0].BookmarkName);
+            // The removal itself still happened despite the warning.
+            Assert.Single(_sut.ListParagraphs(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void RemoveParagraphsWithCrossReferenceCleanup_reports_nothing_when_no_reference_is_affected()
+    {
+        var warnings = _sut.RemoveParagraphsWithCrossReferenceCleanup(_targetPath, startIndex: 1, count: 1, _outputPath);
+
+        Assert.Empty(warnings);
     }
 
     public void Dispose()

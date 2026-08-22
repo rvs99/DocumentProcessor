@@ -1,5 +1,8 @@
 using DocumentProcessor.Core.Conversion;
+using DocumentProcessor.Core.PdfFonts;
 using DocumentProcessor.Core.Samples;
+using PdfSharp.Drawing;
+using PdfSharp.Pdf;
 
 namespace DocumentProcessor.Tests;
 
@@ -34,5 +37,28 @@ public static class TestFiles
         {
             File.Delete(docxPath);
         }
+    }
+
+    /// <summary>
+    /// Builds a PDF with <paramref name="pageCount"/> pages directly via PDFsharp — no LibreOffice
+    /// involved — for tests of PDF-only services that just need identifiable pages, not real docx
+    /// conversion fidelity. Each page's text is "{labelPrefix} {1-based page number}".
+    /// </summary>
+    public static string NewSimplePdf(int pageCount, string labelPrefix)
+    {
+        var path = NewTempPath(".pdf");
+        PdfFontResolver.EnsureRegistered();
+        using var document = new PdfDocument();
+        var font = new XFont("Arial", 20);
+
+        for (var i = 1; i <= pageCount; i++)
+        {
+            var page = document.AddPage();
+            using var gfx = XGraphics.FromPdfPage(page);
+            gfx.DrawString($"{labelPrefix} {i}", font, XBrushes.Black, new XPoint(50, 50));
+        }
+
+        document.Save(path);
+        return path;
     }
 }
