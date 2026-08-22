@@ -4,11 +4,18 @@ using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace DocumentProcessor.Core.TrackChanges;
 
+public enum TrackedChangeKind { Insertion, Deletion }
+
+/// <summary>One tracked-change run, as recorded by Word itself — the same author/date/id already
+/// present in the OOXML (<c>w:author</c>/<c>w:date</c>/<c>w:id</c> on <c>w:ins</c>/<c>w:del</c>),
+/// just surfaced as data instead of requiring callers to walk the XML themselves.</summary>
+public sealed record TrackedChange(string? ChangeId, string? Author, DateTime? Date, TrackedChangeKind Kind, int ParagraphIndex, string Text);
+
 /// <summary>
 /// Accepts or rejects Word's tracked changes (w:ins/w:del run-level revisions) programmatically —
 /// e.g. to finalize a document after negotiation, or to roll back a batch of proposed edits.
-/// Accept reuses Clippit's RevisionAccepter; reject is hand-rolled since no free library ships one
-/// (the reverse operation is the symmetric case: discard insertions, restore deletions).
+/// Accept-all reuses Clippit's RevisionAccepter; everything else (reject, and every author/id-scoped
+/// variant) is hand-rolled since no free library ships selective accept/reject.
 /// Scope: covers run-level insertions/deletions, which is the vast majority of real-world tracked
 /// changes. Paragraph-mark and formatting-change revisions (pPrChange/rPrChange) are left as-is.
 /// </summary>
@@ -21,29 +28,107 @@ public sealed class TrackChangesService
         RevisionAccepter.AcceptRevisions(doc);
     }
 
+    /// <summary>Accepts only the tracked changes made by <paramref name="author"/> (an exact match
+    /// against <c>w:author</c>), leaving every other author's changes still pending.</summary>
+    public void AcceptByAuthor(string docxPath, string author) =>
+        AcceptWhere(docxPath, (_, a) => a == author);
+
+    /// <summary>Accepts only the single tracked change with the given <c>w:id</c>.</summary>
+    public void AcceptById(string docxPath, string changeId) =>
+        AcceptWhere(docxPath, (id, _) => id == changeId);
+
     /// <summary>Rejects every tracked change: inserted text is discarded, deleted text is restored.</summary>
-    public void RejectAll(string docxPath)
-    {
-        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+    public void RejectAll(string docxPath) => RejectWhere(docxPath, (_, _) => true);
 
-        foreach (var insertedRun in document.Descendants<InsertedRun>().ToList())
-            insertedRun.Remove();
+    /// <summary>Rejects only the tracked changes made by <paramref name="author"/>, leaving every
+    /// other author's changes still pending.</summary>
+    public void RejectByAuthor(string docxPath, string author) =>
+        RejectWhere(docxPath, (_, a) => a == author);
 
-        foreach (var deletedRun in document.Descendants<DeletedRun>().ToList())
-        {
-            RestoreDeletedText(deletedRun);
-            UnwrapInPlace(deletedRun);
-        }
-
-        document.Save();
-    }
+    /// <summary>Rejects only the single tracked change with the given <c>w:id</c>.</summary>
+    public void RejectById(string docxPath, string changeId) =>
+        RejectWhere(docxPath, (id, _) => id == changeId);
 
     /// <summary>Whether the document contains any unresolved tracked changes.</summary>
     public bool HasTrackedChanges(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
         return RevisionAccepter.HasTrackedRevisions(doc);
+    }
+
+    /// <summary>Lists every unresolved tracked change with its author, timestamp, id, kind, and the
+    /// (0-based) paragraph index it lives in — for building a review UI or audit trail without the
+    /// caller having to walk <c>w:ins</c>/<c>w:del</c> elements directly.</summary>
+    public IReadOnlyList<TrackedChange> GetTrackedChanges(string docxPath)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var paragraphs = body.Elements<Paragraph>().ToList();
+
+        var changes = new List<TrackedChange>();
+        for (var i = 0; i < paragraphs.Count; i++)
+        {
+            foreach (var insertedRun in paragraphs[i].Descendants<InsertedRun>())
+            {
+                var text = string.Concat(insertedRun.Descendants<Text>().Select(t => t.Text));
+                changes.Add(new TrackedChange(insertedRun.Id?.Value, insertedRun.Author?.Value, insertedRun.Date?.Value, TrackedChangeKind.Insertion, i, text));
+            }
+
+            foreach (var deletedRun in paragraphs[i].Descendants<DeletedRun>())
+            {
+                var text = string.Concat(deletedRun.Descendants<DeletedText>().Select(t => t.Text));
+                changes.Add(new TrackedChange(deletedRun.Id?.Value, deletedRun.Author?.Value, deletedRun.Date?.Value, TrackedChangeKind.Deletion, i, text));
+            }
+        }
+
+        return changes;
+    }
+
+    private static void AcceptWhere(string docxPath, Func<string?, string?, bool> matches)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+
+        // Accepting an insertion keeps its content — unwrap the w:ins wrapper in place.
+        foreach (var insertedRun in document.Descendants<InsertedRun>().ToList())
+        {
+            if (matches(insertedRun.Id?.Value, insertedRun.Author?.Value))
+                UnwrapInPlace(insertedRun);
+        }
+
+        // Accepting a deletion confirms it — the deleted content goes away entirely.
+        foreach (var deletedRun in document.Descendants<DeletedRun>().ToList())
+        {
+            if (matches(deletedRun.Id?.Value, deletedRun.Author?.Value))
+                deletedRun.Remove();
+        }
+
+        document.Save();
+    }
+
+    private static void RejectWhere(string docxPath, Func<string?, string?, bool> matches)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+
+        // Rejecting an insertion undoes it — the inserted content goes away entirely.
+        foreach (var insertedRun in document.Descendants<InsertedRun>().ToList())
+        {
+            if (matches(insertedRun.Id?.Value, insertedRun.Author?.Value))
+                insertedRun.Remove();
+        }
+
+        // Rejecting a deletion restores it — unwrap the w:del wrapper, turning w:delText back into w:t.
+        foreach (var deletedRun in document.Descendants<DeletedRun>().ToList())
+        {
+            if (!matches(deletedRun.Id?.Value, deletedRun.Author?.Value))
+                continue;
+
+            RestoreDeletedText(deletedRun);
+            UnwrapInPlace(deletedRun);
+        }
+
+        document.Save();
     }
 
     private static void RestoreDeletedText(DeletedRun deletedRun)

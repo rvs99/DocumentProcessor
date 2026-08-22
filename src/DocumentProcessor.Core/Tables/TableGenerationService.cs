@@ -1,5 +1,6 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.Templating;
 
 namespace DocumentProcessor.Core.Tables;
 
@@ -71,6 +72,47 @@ public sealed class TableGenerationService
         var replacement = BuildTable(spec);
         body.ReplaceChild(replacement, existing);
         document.Save();
+    }
+
+    /// <summary>
+    /// Populates a table by cloning its last row as a <c>{{token}}</c>-templated prototype — once
+    /// per entry in <paramref name="rows"/> — rather than requiring the caller to pre-build every
+    /// row's cell text themselves as <see cref="AppendTable"/>/<see cref="ReplaceTable"/> do. Each
+    /// cell in the prototype row may contain any number of <c>{{field}}</c> tokens, resolved against
+    /// that row's own dictionary via the same run-merged scanner <see cref="TemplateEngine"/> uses,
+    /// so a token split across several runs (a real risk in a prototype row typed directly in Word)
+    /// still resolves correctly. The prototype row itself is removed after the last clone is inserted.
+    /// </summary>
+    /// <returns>The number of rows generated (equal to <paramref name="rows"/>.Count).</returns>
+    public int PopulateFromPrototypeRow(
+        string docxPath, int tableIndex,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
+        MissingTokenPolicy missingTokenPolicy = MissingTokenPolicy.Error)
+    {
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
+        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+
+        var table = body.Elements<Table>().ElementAtOrDefault(tableIndex)
+            ?? throw new ArgumentOutOfRangeException(nameof(tableIndex), $"Document has no table at index {tableIndex}.");
+
+        var prototypeRow = table.Elements<TableRow>().LastOrDefault()
+            ?? throw new InvalidOperationException("Table has no rows to use as a prototype.");
+
+        foreach (var item in rows)
+        {
+            var clone = (TableRow)prototypeRow.CloneNode(true);
+            var context = new TemplateContext(item);
+            foreach (var paragraph in clone.Descendants<Paragraph>().ToList())
+                TemplateEngine.SubstituteInline(paragraph, context, mainPart, missingTokenPolicy);
+
+            prototypeRow.InsertBeforeSelf(clone);
+        }
+
+        prototypeRow.Remove();
+        document.Save();
+        return rows.Count;
     }
 
     private Table BuildTable(TableSpec spec)

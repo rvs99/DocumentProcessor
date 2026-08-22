@@ -253,7 +253,11 @@ public sealed class TemplateEngine
 
     // ---- Inline scalar / HTML substitution ------------------------------------------------------
 
-    private static void SubstituteInline(Paragraph paragraph, TemplateContext context, MainDocumentPart mainPart, MissingTokenPolicy policy)
+    /// <summary>Applies inline <c>{{token}}</c>/<c>{{html:token}}</c> substitution to a single
+    /// paragraph. Exposed beyond <see cref="Fill"/> so other services needing the same run-merged
+    /// substitution primitive (e.g. <see cref="Tables.TableGenerationService"/>'s prototype-row
+    /// population) don't have to reimplement it.</summary>
+    internal static void SubstituteInline(Paragraph paragraph, TemplateContext context, MainDocumentPart mainPart, MissingTokenPolicy policy)
     {
         var trimmed = paragraph.InnerText.Trim();
         var wholeParagraphHtmlMatch = Regex.Match(trimmed, @"^\{\{html:([A-Za-z0-9_.]+)\}\}$");

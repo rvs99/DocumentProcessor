@@ -49,6 +49,75 @@ public class DocumentComparisonServiceTests : IDisposable
         Assert.Equal(0, summary.DeletedCount);
     }
 
+    [Fact]
+    public void CompareDetailed_reports_a_nonzero_percent_changed()
+    {
+        var summary = _sut.CompareDetailed(_originalPath, _revisedPath, _outputPath);
+
+        Assert.True(summary.InsertedCount > 0);
+        Assert.True(summary.PercentChanged > 0);
+    }
+
+    [Fact]
+    public void CompareDetailed_counts_a_same_text_insert_delete_pair_as_a_format_change()
+    {
+        var original = TestFiles.NewTempPath(".docx");
+        var revised = TestFiles.NewTempPath(".docx");
+        var output = TestFiles.NewTempPath(".docx");
+        try
+        {
+            // Same words, only the formatting differs (bold) — WmlComparer represents this as a
+            // delete-old-run + insert-new-run pair of identical text, which is exactly the signal
+            // FormatChangeCount looks for.
+            SampleDocumentFactory.CreateDocumentFromParagraphs(original, [new Paragraph(new Run(new Text("Confidential")))]);
+            SampleDocumentFactory.CreateDocumentFromParagraphs(revised,
+                [new Paragraph(new Run(new RunProperties(new Bold()), new Text("Confidential")))]);
+
+            var summary = _sut.CompareDetailed(original, revised, output);
+
+            // WmlComparer's own revision stream is empty here (it diffs text content only, not
+            // formatting) — FormatChangeCount comes from a separate position-paired pass instead.
+            Assert.Equal(0, summary.InsertedCount);
+            Assert.Equal(0, summary.DeletedCount);
+            Assert.Equal(1, summary.FormatChangeCount);
+        }
+        finally
+        {
+            File.Delete(original);
+            File.Delete(revised);
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
+    [Fact]
+    public void CompareDetailed_identifies_the_heading_a_change_falls_under()
+    {
+        var original = TestFiles.NewTempPath(".docx");
+        var revised = TestFiles.NewTempPath(".docx");
+        var output = TestFiles.NewTempPath(".docx");
+        try
+        {
+            var headingParagraph = new Paragraph(
+                new ParagraphProperties(new ParagraphStyleId { Val = "Heading1" }),
+                new Run(new Text("Payment Terms")));
+
+            SampleDocumentFactory.CreateDocumentFromParagraphs(original,
+                [headingParagraph, new Paragraph(new Run(new Text("Net 30 days.")))]);
+            SampleDocumentFactory.CreateDocumentFromParagraphs(revised,
+                [(Paragraph)headingParagraph.CloneNode(true), new Paragraph(new Run(new Text("Net 60 days.")))]);
+
+            var summary = _sut.CompareDetailed(original, revised, output);
+
+            Assert.Contains("Payment Terms", summary.AffectedHeadings);
+        }
+        finally
+        {
+            File.Delete(original);
+            File.Delete(revised);
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
     public void Dispose()
     {
         File.Delete(_originalPath);

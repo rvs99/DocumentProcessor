@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentProcessor.Core.Samples;
 using DocumentProcessor.Core.Tables;
+using DocumentProcessor.Core.Templating;
 
 namespace DocumentProcessor.Tests.Tables;
 
@@ -63,6 +65,71 @@ public class TableGenerationServiceTests : IDisposable
         Assert.Equal(2, tables.Count);
         Assert.Equal(["Replaced"], CellText(tables[0].Elements<TableRow>().First()));
         Assert.Equal(["B"], CellText(tables[1].Elements<TableRow>().First()));
+    }
+
+    [Fact]
+    public void PopulateFromPrototypeRow_clones_the_last_row_once_per_item_and_removes_the_prototype()
+    {
+        _sut.AppendTable(_path, new TableSpec(
+            Headers: ["Item", "Qty"],
+            Rows: [["{{Name}}", "{{Quantity}}"]]));
+
+        var rows = new List<IReadOnlyDictionary<string, object?>>
+        {
+            new Dictionary<string, object?> { ["Name"] = "Widget", ["Quantity"] = "3" },
+            new Dictionary<string, object?> { ["Name"] = "Gadget", ["Quantity"] = "1" }
+        };
+
+        var generated = _sut.PopulateFromPrototypeRow(_path, tableIndex: 0, rows);
+
+        Assert.Equal(2, generated);
+        using var doc = WordprocessingDocument.Open(_path, isEditable: false);
+        var table = doc.MainDocumentPart!.Document!.Body!.Elements<Table>().Single();
+        var dataRows = table.Elements<TableRow>().Skip(1).ToList(); // skip header
+
+        Assert.Equal(2, dataRows.Count); // prototype row itself is gone, replaced by exactly 2 clones
+        Assert.Equal(["Widget", "3"], CellText(dataRows[0]));
+        Assert.Equal(["Gadget", "1"], CellText(dataRows[1]));
+    }
+
+    [Fact]
+    public void PopulateFromPrototypeRow_with_Error_policy_throws_on_a_missing_field()
+    {
+        _sut.AppendTable(_path, new TableSpec(["Item"], [["{{Missing}}"]]));
+
+        Assert.Throws<MissingTemplateTokenException>(() => _sut.PopulateFromPrototypeRow(
+            _path, 0, [new Dictionary<string, object?>()]));
+    }
+
+    [Fact]
+    public void PopulateFromPrototypeRow_scales_to_ten_thousand_rows_in_a_reasonable_time()
+    {
+        _sut.AppendTable(_path, new TableSpec(
+            Headers: ["Index", "Name"],
+            Rows: [["{{Index}}", "{{Name}}"]]));
+
+        var rows = Enumerable.Range(0, 10_000)
+            .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+            {
+                ["Index"] = i.ToString(),
+                ["Name"] = $"Row {i}"
+            })
+            .ToList();
+
+        var stopwatch = Stopwatch.StartNew();
+        var generated = _sut.PopulateFromPrototypeRow(_path, 0, rows);
+        stopwatch.Stop();
+
+        Assert.Equal(10_000, generated);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(30),
+            $"Populating 10,000 rows took {stopwatch.Elapsed}, expected under 30s.");
+
+        using var doc = WordprocessingDocument.Open(_path, isEditable: false);
+        var table = doc.MainDocumentPart!.Document!.Body!.Elements<Table>().Single();
+        var dataRows = table.Elements<TableRow>().Skip(1).ToList();
+        Assert.Equal(10_000, dataRows.Count);
+        Assert.Equal(["0", "Row 0"], CellText(dataRows[0]));
+        Assert.Equal(["9999", "Row 9999"], CellText(dataRows[9999]));
     }
 
     private static List<string> CellText(TableRow row) =>

@@ -184,6 +184,24 @@ public static class SampleDocumentFactory
                 Type = StyleValues.Paragraph,
                 StyleId = "Normal",
                 Default = true
+            },
+            new Style(
+                new StyleName { Val = "heading 1" },
+                new BasedOn { Val = "Normal" },
+                new NextParagraphStyle { Val = "Normal" },
+                new RunProperties(new Bold(), new FontSize { Val = "28" }))
+            {
+                Type = StyleValues.Paragraph,
+                StyleId = "Heading1"
+            },
+            new Style(
+                new StyleName { Val = "heading 2" },
+                new BasedOn { Val = "Normal" },
+                new NextParagraphStyle { Val = "Normal" },
+                new RunProperties(new Bold(), new FontSize { Val = "24" }))
+            {
+                Type = StyleValues.Paragraph,
+                StyleId = "Heading2"
             });
         stylesPart.Styles = styles;
         stylesPart.Styles.Save();
