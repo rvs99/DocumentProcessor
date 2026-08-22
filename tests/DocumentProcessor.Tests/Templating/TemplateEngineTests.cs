@@ -231,6 +231,31 @@ public class TemplateEngineTests : IDisposable
     }
 
     [Fact]
+    public void Fill_of_a_repeat_block_honors_a_pre_cancelled_token()
+    {
+        SampleDocumentFactory.CreateDocumentFromParagraphs(_templatePath,
+        [
+            Literal("{{repeat:Parties}}"),
+            Literal("- {{Name}}"),
+            Literal("{{/repeat}}")
+        ]);
+
+        var data = new Dictionary<string, object?>
+        {
+            ["Parties"] = new List<IReadOnlyDictionary<string, object?>>
+            {
+                new Dictionary<string, object?> { ["Name"] = "Acme Corp" }
+            }
+        };
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            _sut.Fill(_templatePath, _outputPath, data, cancellationToken: cts.Token));
+    }
+
+    [Fact]
     public void Fill_injects_a_clause_by_id_and_continues_heading_numbering()
     {
         var libraryPath = TestFiles.NewTempPath(".docx");

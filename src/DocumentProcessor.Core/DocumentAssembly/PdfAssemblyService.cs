@@ -15,7 +15,7 @@ namespace DocumentProcessor.Core.DocumentAssembly;
 public sealed class PdfAssemblyService
 {
     /// <summary>Concatenates <paramref name="pdfPaths"/> in order into one PDF at <paramref name="outputPath"/>.</summary>
-    public void MergePdfs(IReadOnlyList<string> pdfPaths, string outputPath)
+    public void MergePdfs(IReadOnlyList<string> pdfPaths, string outputPath, CancellationToken cancellationToken = default)
     {
         if (pdfPaths.Count == 0)
             throw new ArgumentException("Must supply at least one PDF to merge.", nameof(pdfPaths));
@@ -23,6 +23,7 @@ public sealed class PdfAssemblyService
         using var output = new PdfDocument();
         foreach (var path in pdfPaths)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             using var input = PdfReader.Open(path, PdfDocumentOpenMode.Import);
             output.Pages.InsertRange(output.PageCount, input);
         }

@@ -87,7 +87,8 @@ public sealed class TableGenerationService
     public int PopulateFromPrototypeRow(
         string docxPath, int tableIndex,
         IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
-        MissingTokenPolicy missingTokenPolicy = MissingTokenPolicy.Error)
+        MissingTokenPolicy missingTokenPolicy = MissingTokenPolicy.Error,
+        CancellationToken cancellationToken = default)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
@@ -100,8 +101,15 @@ public sealed class TableGenerationService
         var prototypeRow = table.Elements<TableRow>().LastOrDefault()
             ?? throw new InvalidOperationException("Table has no rows to use as a prototype.");
 
+        // Checked every 100 rows rather than every row: ThrowIfCancellationRequested's overhead is
+        // trivial per-call, but at 10,000+ rows even a trivial per-iteration check adds up, and
+        // cancellation latency of "up to 100 rows late" is irrelevant at this operation's timescale.
+        var processed = 0;
         foreach (var item in rows)
         {
+            if (++processed % 100 == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+
             var clone = (TableRow)prototypeRow.CloneNode(true);
             var context = new TemplateContext(item);
             foreach (var paragraph in clone.Descendants<Paragraph>().ToList())

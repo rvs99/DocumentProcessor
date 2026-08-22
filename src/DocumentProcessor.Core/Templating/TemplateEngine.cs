@@ -54,7 +54,8 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
         string outputPath,
         IReadOnlyDictionary<string, object?> data,
         MissingTokenPolicy missingTokenPolicy = MissingTokenPolicy.Error,
-        ClauseLibrary? clauseLibrary = null)
+        ClauseLibrary? clauseLibrary = null,
+        CancellationToken cancellationToken = default)
     {
         using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TemplateEngine.Fill");
         activity?.SetTag("missingTokenPolicy", missingTokenPolicy.ToString());
@@ -74,13 +75,13 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
             if (index != paragraphs.Count)
                 throw new FormatException("Unbalanced {{if}}/{{repeat}} markers in template.");
 
-            ExpandNodes(nodes, new TemplateContext(data), mainPart, missingTokenPolicy);
+            ExpandNodes(nodes, new TemplateContext(data), mainPart, missingTokenPolicy, cancellationToken);
 
             document.Save();
         }
 
         if (clauseLibrary is not null)
-            ResolveClauseMarkers(outputPath, clauseLibrary, data, missingTokenPolicy);
+            ResolveClauseMarkers(outputPath, clauseLibrary, data, missingTokenPolicy, cancellationToken);
 
         var warnings = missingTokenPolicy == MissingTokenPolicy.Highlight
             ? FindHighlightWarnings(outputPath)
@@ -234,7 +235,7 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
 
     // ---- Expansion (direct in-place OOXML mutation) ------------------------------------------
 
-    private static void ExpandNodes(IReadOnlyList<Node> nodes, TemplateContext context, MainDocumentPart mainPart, MissingTokenPolicy policy)
+    private static void ExpandNodes(IReadOnlyList<Node> nodes, TemplateContext context, MainDocumentPart mainPart, MissingTokenPolicy policy, CancellationToken cancellationToken)
     {
         foreach (var node in nodes)
         {
@@ -256,11 +257,11 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
                     foreach (var paragraph in CollectParagraphsInOrder(discarded))
                         paragraph.Remove();
 
-                    ExpandNodes(chosen, context, mainPart, policy);
+                    ExpandNodes(chosen, context, mainPart, policy, cancellationToken);
                     break;
 
                 case RepeatNode repeatNode:
-                    ExpandRepeat(repeatNode, context, mainPart, policy);
+                    ExpandRepeat(repeatNode, context, mainPart, policy, cancellationToken);
                     break;
 
                 case ClauseNode:
@@ -272,7 +273,7 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
         }
     }
 
-    private static void ExpandRepeat(RepeatNode repeatNode, TemplateContext context, MainDocumentPart mainPart, MissingTokenPolicy policy)
+    private static void ExpandRepeat(RepeatNode repeatNode, TemplateContext context, MainDocumentPart mainPart, MissingTokenPolicy policy, CancellationToken cancellationToken)
     {
         var found = context.TryResolve(repeatNode.CollectionPath, out var rawCollection);
         if (!found && policy == MissingTokenPolicy.Error)
@@ -283,13 +284,15 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
 
         foreach (var item in items)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var clones = templateParagraphs.Select(p => (Paragraph)p.CloneNode(true)).ToList();
             foreach (var clone in clones)
                 repeatNode.StartMarker.InsertBeforeSelf(clone);
 
             var cloneIndex = 0;
             var childNodes = ParseSequence(clones, ref cloneIndex);
-            ExpandNodes(childNodes, context.Push(item), mainPart, policy);
+            ExpandNodes(childNodes, context.Push(item), mainPart, policy, cancellationToken);
         }
 
         foreach (var paragraph in templateParagraphs)
@@ -420,13 +423,14 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
 
     // ---- Clause marker resolution (second pass, after the main document is saved) ------------
 
-    private static void ResolveClauseMarkers(string outputPath, ClauseLibrary clauseLibrary, IReadOnlyDictionary<string, object?> data, MissingTokenPolicy policy)
+    private static void ResolveClauseMarkers(string outputPath, ClauseLibrary clauseLibrary, IReadOnlyDictionary<string, object?> data, MissingTokenPolicy policy, CancellationToken cancellationToken)
     {
         var transplant = new ClauseTransplantService();
         var context = new TemplateContext(data);
 
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var paragraphs = transplant.ListParagraphs(outputPath);
             var markerIndex = -1;
             string? clauseId = null;

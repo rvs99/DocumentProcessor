@@ -102,6 +102,21 @@ public class TableGenerationServiceTests : IDisposable
     }
 
     [Fact]
+    public void PopulateFromPrototypeRow_honors_a_pre_cancelled_token()
+    {
+        _sut.AppendTable(_path, new TableSpec(["Item"], [["{{Name}}"]]));
+        var rows = Enumerable.Range(0, 500)
+            .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?> { ["Name"] = $"Row {i}" })
+            .ToList();
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            _sut.PopulateFromPrototypeRow(_path, 0, rows, cancellationToken: cts.Token));
+    }
+
+    [Fact]
     public void PopulateFromPrototypeRow_scales_to_ten_thousand_rows_in_a_reasonable_time()
     {
         _sut.AppendTable(_path, new TableSpec(

@@ -45,6 +45,17 @@ public class PdfAssemblyServiceTests : IDisposable
     }
 
     [Fact]
+    public void MergePdfs_honors_a_pre_cancelled_token()
+    {
+        var a = NewPdf(1, "A");
+        var b = NewPdf(1, "B");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => _sut.MergePdfs([a, b], _outputPath, cts.Token));
+    }
+
+    [Fact]
     public void ExtractPages_returns_only_the_requested_inclusive_range()
     {
         var source = NewPdf(5, "Page");

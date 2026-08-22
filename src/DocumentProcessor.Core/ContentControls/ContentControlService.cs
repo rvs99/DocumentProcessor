@@ -41,6 +41,34 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
     {
         using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("ContentControlService.ReplaceByTag");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var updated = ReplaceByTagCore(doc, tag, newValue);
+        LogReplaceByTagResult(updated, tag, docxPath);
+        return updated;
+    }
+
+    /// <summary>
+    /// Byte[]-in/byte[]-out variant of <see cref="ReplaceByTag(string,string,string)"/> — no
+    /// filesystem I/O, for a caller holding the document in memory (a web upload, a database blob)
+    /// rather than as a file on disk.
+    /// </summary>
+    /// <returns>The updated document bytes, and the number of content controls updated.</returns>
+    public (byte[] Document, int UpdatedCount) ReplaceByTag(byte[] docxBytes, string tag, string newValue)
+    {
+        using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("ContentControlService.ReplaceByTag");
+        using var stream = new MemoryStream();
+        stream.Write(docxBytes, 0, docxBytes.Length);
+        stream.Position = 0;
+
+        int updated;
+        using (var doc = WordprocessingDocument.Open(stream, isEditable: true))
+            updated = ReplaceByTagCore(doc, tag, newValue);
+
+        LogReplaceByTagResult(updated, tag, "<in-memory>");
+        return (stream.ToArray(), updated);
+    }
+
+    private static int ReplaceByTagCore(WordprocessingDocument doc, string tag, string newValue)
+    {
         var document = RequireDocument(doc);
 
         var updated = 0;
@@ -57,12 +85,15 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
         if (updated > 0)
             document.Save();
 
-        if (updated == 0)
-            _logger.LogWarning("ReplaceByTag found no content control tagged {Tag} in {DocxPath}", tag, docxPath);
-        else
-            _logger.LogDebug("Replaced {Count} content control(s) tagged {Tag} in {DocxPath}", updated, tag, docxPath);
-
         return updated;
+    }
+
+    private void LogReplaceByTagResult(int updated, string tag, string source)
+    {
+        if (updated == 0)
+            _logger.LogWarning("ReplaceByTag found no content control tagged {Tag} in {Source}", tag, source);
+        else
+            _logger.LogDebug("Replaced {Count} content control(s) tagged {Tag} in {Source}", updated, tag, source);
     }
 
     /// <summary>

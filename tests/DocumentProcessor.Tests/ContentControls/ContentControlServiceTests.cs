@@ -54,6 +54,40 @@ public class ContentControlServiceTests : IDisposable
     }
 
     [Fact]
+    public void ReplaceByTag_byte_array_overload_updates_the_control_with_no_filesystem_output()
+    {
+        var originalBytes = File.ReadAllBytes(_path);
+
+        var (updatedBytes, updatedCount) = _sut.ReplaceByTag(originalBytes, "ClientName", "Acme Corp");
+
+        Assert.Equal(1, updatedCount);
+        Assert.NotEqual(originalBytes, updatedBytes);
+
+        var roundTripPath = TestFiles.NewTempPath(".docx");
+        try
+        {
+            File.WriteAllBytes(roundTripPath, updatedBytes);
+            var controls = _sut.ListContentControls(roundTripPath).ToDictionary(c => c.Tag!, c => c.Text);
+            Assert.Equal("Acme Corp", controls["ClientName"]);
+            Assert.Equal("[Date]", controls["EffectiveDate"]);
+        }
+        finally
+        {
+            File.Delete(roundTripPath);
+        }
+    }
+
+    [Fact]
+    public void ReplaceByTag_byte_array_overload_does_not_modify_the_original_file_on_disk()
+    {
+        var originalBytes = File.ReadAllBytes(_path);
+
+        _sut.ReplaceByTag(originalBytes, "ClientName", "Acme Corp");
+
+        Assert.Equal(originalBytes, File.ReadAllBytes(_path));
+    }
+
+    [Fact]
     public void ListContentControls_returns_tag_alias_and_current_text_for_every_control()
     {
         var controls = _sut.ListContentControls(_path);
