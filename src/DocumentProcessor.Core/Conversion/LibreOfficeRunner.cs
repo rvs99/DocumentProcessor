@@ -82,6 +82,72 @@ internal static class LibreOfficeGate
 internal sealed record LibreOfficeSettings(string ExecutablePath, string? UseWslDistro, TimeSpan Timeout, TimeSpan QueueTimeout);
 
 /// <summary>
+/// The private user profile directory one LibreOffice invocation runs against, and its cleanup.
+/// <para>
+/// Where the profile lives matters a great deal on the WSL path. LibreOffice populates a profile
+/// with hundreds of small files, and doing that across the <c>/mnt/c</c> 9p mount takes roughly a
+/// minute per conversion — measured, not assumed. So under WSL the profile stays on the distro's
+/// own filesystem, which means the host cannot delete it with <see cref="Directory.Delete"/> and
+/// has to shell back in to remove it. That extra spawn costs milliseconds and buys back ~59 seconds.
+/// </para>
+/// </summary>
+internal sealed class LibreOfficeProfile : IDisposable
+{
+    private readonly string? _wslDistro;
+    private readonly string _cleanupPath;
+
+    private LibreOfficeProfile(string pathForLibreOffice, string cleanupPath, string? wslDistro)
+    {
+        PathForLibreOffice = pathForLibreOffice;
+        _cleanupPath = cleanupPath;
+        _wslDistro = wslDistro;
+    }
+
+    /// <summary>The profile path as LibreOffice itself must see it.</summary>
+    public string PathForLibreOffice { get; }
+
+    public static LibreOfficeProfile Create(LibreOfficeSettings settings, TempScratchDirectory scratch)
+    {
+        if (settings.UseWslDistro is { } distro)
+        {
+            var linuxPath = $"/tmp/docproc-lo-profile-{Guid.NewGuid():N}";
+            return new LibreOfficeProfile(linuxPath, linuxPath, distro);
+        }
+
+        // Native: the profile can live inside the scratch directory, which is removed wholesale.
+        var profileDir = Path.Combine(scratch.Path, "profile");
+        Directory.CreateDirectory(profileDir);
+        return new LibreOfficeProfile(profileDir, profileDir, wslDistro: null);
+    }
+
+    public void Dispose()
+    {
+        if (_wslDistro is null)
+            return; // the scratch directory's own cleanup covers it
+
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "wsl.exe",
+                ArgumentList = { "-d", _wslDistro, "--", "rm", "-rf", _cleanupPath },
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            });
+
+            // Bounded: cleanup must never be able to hang or fail the caller's operation.
+            process?.WaitForExit(milliseconds: 15_000);
+        }
+        catch
+        {
+            // Best-effort. WSL profiles live in the distro's /tmp, which is cleared on restart.
+        }
+    }
+}
+
+/// <summary>
 /// Runs one <c>soffice --convert-to</c> invocation to completion. Shared by every converter so the
 /// process-lifetime rules — concurrency cap, guaranteed child termination, scratch-directory
 /// cleanup, bounded output capture — are implemented and fixed in exactly one place.
@@ -106,13 +172,12 @@ internal static class LibreOfficeRunner
 
         using var gate = await LibreOfficeGate.EnterAsync(settings.QueueTimeout, cancellationToken).ConfigureAwait(false);
         using var scratch = new TempScratchDirectory();
+        using var profile = LibreOfficeProfile.Create(settings, scratch);
 
-        var profileDir = Path.Combine(scratch.Path, "profile");
         var convertOutDir = Path.Combine(scratch.Path, "out");
-        Directory.CreateDirectory(profileDir);
         Directory.CreateDirectory(convertOutDir);
 
-        var (fileName, args) = BuildInvocation(settings, inputPath, convertOutDir, profileDir, targetExtension);
+        var (fileName, args) = BuildInvocation(settings, inputPath, convertOutDir, profile, targetExtension);
 
         var psi = new ProcessStartInfo
         {
@@ -180,13 +245,12 @@ internal static class LibreOfficeRunner
     }
 
     private static (string fileName, List<string> args) BuildInvocation(
-        LibreOfficeSettings settings, string inputPath, string convertOutDir, string profileDir, string targetExtension)
+        LibreOfficeSettings settings, string inputPath, string convertOutDir, LibreOfficeProfile profile, string targetExtension)
     {
         var args = new List<string>();
         string fileName;
         string effectiveInputPath;
         string effectiveOutDir;
-        string effectiveProfileDir;
 
         if (settings.UseWslDistro is { } distro)
         {
@@ -194,23 +258,18 @@ internal static class LibreOfficeRunner
             args.AddRange(["-d", distro, "--", "soffice"]);
             effectiveInputPath = ToWslPath(inputPath);
             effectiveOutDir = ToWslPath(convertOutDir);
-            // Deliberately the translated Windows-side scratch path rather than a distro-local
-            // /tmp path: a path inside the distro cannot be cleaned up by this process, which is
-            // how the old code leaked a profile directory on every single conversion.
-            effectiveProfileDir = ToWslPath(profileDir);
         }
         else
         {
             fileName = settings.ExecutablePath;
             effectiveInputPath = inputPath;
             effectiveOutDir = convertOutDir;
-            effectiveProfileDir = profileDir;
         }
 
         args.AddRange([
             "--headless",
             "--norestore",
-            $"-env:UserInstallation=file:///{effectiveProfileDir.Replace('\\', '/').TrimStart('/')}",
+            $"-env:UserInstallation=file:///{profile.PathForLibreOffice.Replace('\\', '/').TrimStart('/')}",
             "--convert-to", targetExtension,
             "--outdir", effectiveOutDir,
             effectiveInputPath

@@ -1,3 +1,4 @@
+using Clippit.Word;
 using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -423,66 +424,186 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
 
     // ---- Clause marker resolution (second pass, after the main document is saved) ------------
 
+    /// <summary>
+    /// Resolves every <c>{{clause:id}}</c> marker in one batched pass.
+    /// <para>
+    /// The previous implementation looped until no markers remained, transplanting one clause per
+    /// iteration. That cost roughly twelve full document parses and four re-serialisations <em>per
+    /// marker</em>, and was quadratic on two axes: each pass re-scanned from paragraph 0 to find the
+    /// next marker (never resuming), and each pass operated on a document that had grown by the
+    /// previous clause. A sixty-clause master template ran to hundreds of parses. Here every marker
+    /// is located once and Clippit's DocumentBuilder -- which provides the cross-document
+    /// style/numbering remapping, and is the only reason file paths are involved at all -- is
+    /// invoked exactly once with the whole assembly plan.
+    /// </para>
+    /// </summary>
     private static void ResolveClauseMarkers(string outputPath, ClauseLibrary clauseLibrary, IReadOnlyDictionary<string, object?> data, MissingTokenPolicy policy, CancellationToken cancellationToken)
     {
-        var transplant = new ClauseTransplantService();
-        var context = new TemplateContext(data);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        while (true)
+        var markers = FindClauseMarkers(outputPath, out var totalParagraphs);
+        if (markers.Count == 0)
+            return;
+
+        var target = new WmlDocument(outputPath);
+        var library = new WmlDocument(clauseLibrary.DocxPath);
+
+        var sources = new List<ISource>();
+        var insertedClauses = new List<(int StartIndex, int Count)>();
+        var highlightedMarkers = new List<(int Index, string ClauseId)>();
+        var cursor = 0;    // next unconsumed paragraph in the target
+        var emitted = 0;   // paragraphs written into the assembled document so far
+
+        foreach (var (markerIndex, clauseId) in markers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var paragraphs = transplant.ListParagraphs(outputPath);
-            var markerIndex = -1;
-            string? clauseId = null;
-            foreach (var p in paragraphs)
+
+            if (markerIndex > cursor)
             {
-                var match = ClausePattern.Match(p.Text.Trim());
-                if (match.Success)
-                {
-                    markerIndex = p.Index;
-                    clauseId = match.Groups[1].Value;
-                    break;
-                }
+                var runLength = markerIndex - cursor;
+                sources.Add(new Source(target, cursor, runLength, keepSections: false));
+                emitted += runLength;
             }
 
-            if (markerIndex < 0)
-                return;
-
-            var range = clauseLibrary.FindClause(clauseId!);
+            var range = clauseLibrary.FindClause(clauseId);
             if (range is null)
             {
                 switch (policy)
                 {
                     case MissingTokenPolicy.Error:
                         throw new InvalidOperationException($"Clause library has no clause with id '{clauseId}'.");
+
                     case MissingTokenPolicy.Redact:
-                        transplant.RemoveParagraphs(outputPath, markerIndex, 1, outputPath);
-                        continue;
+                        // Drop the marker paragraph by simply not emitting it.
+                        break;
+
                     case MissingTokenPolicy.Highlight:
-                        ReplaceParagraphTextHighlighted(outputPath, markerIndex, $"[Missing clause: {clauseId}]");
-                        continue;
+                        // Keep the marker so its text can be replaced with a visible note afterwards.
+                        sources.Add(new Source(target, markerIndex, 1, keepSections: false));
+                        highlightedMarkers.Add((emitted, clauseId));
+                        emitted += 1;
+                        break;
                 }
+
+                cursor = markerIndex + 1;
+                continue;
             }
 
-            var (start, count) = range!.Value;
-            transplant.TransplantParagraphs(clauseLibrary.DocxPath, start, count, outputPath, markerIndex, outputPath);
-            transplant.ContinueHeadingNumbering(outputPath, markerIndex, count);
-            SubstituteInlineInRange(outputPath, markerIndex, count, context, policy);
-            transplant.RemoveParagraphs(outputPath, markerIndex + count, 1, outputPath);
+            var (clauseStart, clauseCount) = range.Value;
+            sources.Add(new Source(library, clauseStart, clauseCount, keepSections: false));
+            insertedClauses.Add((emitted, clauseCount));
+            emitted += clauseCount;
+            cursor = markerIndex + 1;   // the marker itself is consumed, never emitted
         }
+
+        // The trailing run carries the document's section properties. When the last paragraph was
+        // itself a marker there is nothing left to emit, so take a zero-length source rather than
+        // re-emitting the final paragraph — doing that would duplicate the consumed marker back
+        // into the output.
+        var trailing = totalParagraphs - cursor;
+        sources.Add(new Source(target, trailing > 0 ? cursor : 0, trailing > 0 ? trailing : 0, keepSections: true));
+
+        DocumentBuilder.BuildDocument(sources).SaveAs(outputPath);
+
+        FinalizeAssembledClauses(outputPath, insertedClauses, highlightedMarkers, data, policy);
     }
 
-    private static void SubstituteInlineInRange(string docxPath, int startIndex, int count, TemplateContext context, MissingTokenPolicy policy)
+    /// <summary>Locates every clause marker in one pass, in document order.</summary>
+    private static List<(int Index, string ClauseId)> FindClauseMarkers(string docxPath, out int totalParagraphs)
     {
-        using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+
+        var markers = new List<(int, string)>();
+        var index = 0;
+        foreach (var paragraph in body.Elements<Paragraph>())
+        {
+            var match = ClausePattern.Match(paragraph.InnerText.Trim());
+            if (match.Success)
+                markers.Add((index, match.Groups[1].Value));
+            index++;
+        }
+
+        totalParagraphs = index;
+        return markers;
+    }
+
+    /// <summary>
+    /// Everything that has to happen after assembly -- heading-numbering continuation, token
+    /// substitution inside the injected clauses, and missing-clause highlighting -- in a single
+    /// open of the assembled document rather than one open per clause.
+    /// </summary>
+    private static void FinalizeAssembledClauses(
+        string outputPath,
+        List<(int StartIndex, int Count)> insertedClauses,
+        List<(int Index, string ClauseId)> highlightedMarkers,
+        IReadOnlyDictionary<string, object?> data,
+        MissingTokenPolicy policy)
+    {
+        if (insertedClauses.Count == 0 && highlightedMarkers.Count == 0)
+            return;
+
+        var context = new TemplateContext(data);
+
+        using var doc = WordprocessingDocument.Open(outputPath, isEditable: true);
         var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
         var body = mainPart.Document?.Body ?? throw new InvalidOperationException("Document has no body.");
-        var paragraphs = body.Elements<Paragraph>().Skip(startIndex).Take(count).ToList();
+        var paragraphs = body.Elements<Paragraph>().ToList();
 
-        foreach (var paragraph in paragraphs)
-            SubstituteInline(paragraph, context, mainPart, policy);
+        foreach (var (startIndex, count) in insertedClauses)
+        {
+            ContinueHeadingNumberingInPlace(paragraphs, startIndex, count);
+
+            for (var i = startIndex; i < Math.Min(startIndex + count, paragraphs.Count); i++)
+                SubstituteInline(paragraphs[i], context, mainPart, policy);
+        }
+
+        foreach (var (markerIndex, clauseId) in highlightedMarkers)
+        {
+            if (markerIndex >= paragraphs.Count)
+                continue;
+
+            var paragraph = paragraphs[markerIndex];
+            paragraph.RemoveAllChildren<Run>();
+            var run = new Run(new Text($"[Missing clause: {clauseId}]") { Space = SpaceProcessingModeValues.Preserve });
+            ApplyHighlight(run);
+            paragraph.AppendChild(run);
+        }
 
         mainPart.Document!.Save();
+    }
+
+    /// <summary>
+    /// Same rule as <see cref="Transplant.ClauseTransplantService.ContinueHeadingNumbering"/> -- a
+    /// transplanted clause's first numbered heading adopts the numbering id of the nearest earlier
+    /// heading sharing its style, so it continues the target document's sequence rather than
+    /// restarting -- but against an already-materialised paragraph list, so resolving N clauses
+    /// costs one document open instead of N.
+    /// </summary>
+    private static void ContinueHeadingNumberingInPlace(List<Paragraph> paragraphs, int insertedStartIndex, int insertedCount)
+    {
+        var rangeEnd = Math.Min(insertedStartIndex + insertedCount, paragraphs.Count);
+        for (var i = insertedStartIndex; i < rangeEnd; i++)
+        {
+            var styleId = paragraphs[i].ParagraphProperties?.ParagraphStyleId?.Val?.Value;
+            var numberingProperties = paragraphs[i].ParagraphProperties?.NumberingProperties;
+            if (styleId is null || numberingProperties?.NumberingId is null)
+                continue;
+
+            for (var j = insertedStartIndex - 1; j >= 0; j--)
+            {
+                var precedent = paragraphs[j];
+                if (precedent.ParagraphProperties?.ParagraphStyleId?.Val?.Value != styleId)
+                    continue;
+                if (precedent.ParagraphProperties?.NumberingProperties?.NumberingId is not { } precedentNumId)
+                    continue;
+
+                numberingProperties.NumberingId!.Val = precedentNumId.Val;
+                break;
+            }
+
+            break;
+        }
     }
 
     private static void ReplaceParagraphTextHighlighted(string docxPath, int paragraphIndex, string text)

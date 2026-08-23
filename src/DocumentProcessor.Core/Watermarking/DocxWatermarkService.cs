@@ -77,11 +77,6 @@ public sealed class DocxWatermarkService
 
         var shapeId = removable ? $"{RemovableShapeIdPrefix}{Random.Shared.Next(10_000_000, 99_999_999)}" : LockedShapeId;
 
-        var headerPart = mainPart.AddNewPart<HeaderPart>();
-        headerPart.Header = BuildWatermarkHeader(text, fontFamily, rotationDegrees, colorHex, shapeId, position, widthPt, heightPt, fontSizePt);
-        headerPart.Header.Save();
-        var headerRelId = mainPart.GetIdOfPart(headerPart);
-
         var sectionProperties = body.Elements<SectionProperties>().ToList();
         if (sectionProperties.Count == 0)
         {
@@ -89,18 +84,71 @@ public sealed class DocxWatermarkService
             body.AppendChild(sectionProperties[0]);
         }
 
+        // Compose into whatever default header the section already has, rather than replacing the
+        // reference with a watermark-only header. Replacing it silently discarded any existing
+        // header content — most visibly a tenant's branding logo, since branding and watermarking
+        // are both ordinary steps in the same pipeline and both target the default header.
+        var updatedParts = new HashSet<HeaderPart>();
         foreach (var sectPr in sectionProperties)
         {
-            foreach (var existing in sectPr.Elements<HeaderReference>()
-                .Where(h => h.Type is null || h.Type == HeaderFooterValues.Default).ToList())
+            var headerPart = ResolveOrCreateDefaultHeader(mainPart, sectPr);
+
+            // Several sections can share one header part; only stamp it once.
+            if (!updatedParts.Add(headerPart))
+                continue;
+
+            var header = headerPart.Header ??= new Header();
+
+            // Drop any prior watermark so re-applying replaces rather than stacks. Identified by
+            // shape id, so unrelated header content is left alone.
+            foreach (var run in header.Descendants<Shape>().Where(IsWatermarkShape)
+                         .Select(shape => shape.Ancestors<Run>().FirstOrDefault())
+                         .Where(run => run is not null).Distinct().ToList())
             {
-                existing.Remove();
+                run!.Remove();
             }
 
-            sectPr.PrependChild(new HeaderReference { Type = HeaderFooterValues.Default, Id = headerRelId });
+            header.AppendChild(BuildWatermarkParagraph(text, fontFamily, rotationDegrees, colorHex, shapeId, position, widthPt, heightPt, fontSizePt));
+            header.Save();
         }
 
         document.Save();
+    }
+
+    /// <summary>Returns the header part the section's default <c>w:headerReference</c> points at,
+    /// creating and wiring one only when the section has none.</summary>
+    private static HeaderPart ResolveOrCreateDefaultHeader(MainDocumentPart mainPart, SectionProperties sectPr)
+    {
+        var existingReference = sectPr.Elements<HeaderReference>()
+            .FirstOrDefault(h => h.Type is null || h.Type == HeaderFooterValues.Default);
+
+        if (existingReference?.Id?.Value is { } relId)
+        {
+            // A reference can dangle if the part was removed by other tooling; fall through to
+            // creating a fresh one rather than throwing.
+            try
+            {
+                if (mainPart.GetPartById(relId) is HeaderPart existingPart)
+                    return existingPart;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                existingReference.Remove();
+            }
+        }
+
+        var headerPart = mainPart.AddNewPart<HeaderPart>();
+        headerPart.Header = new Header();
+        headerPart.Header.Save();
+
+        foreach (var stale in sectPr.Elements<HeaderReference>()
+                     .Where(h => h.Type is null || h.Type == HeaderFooterValues.Default).ToList())
+        {
+            stale.Remove();
+        }
+
+        sectPr.PrependChild(new HeaderReference { Type = HeaderFooterValues.Default, Id = mainPart.GetIdOfPart(headerPart) });
+        return headerPart;
     }
 
     /// <summary>
@@ -144,7 +192,7 @@ public sealed class DocxWatermarkService
     private static bool IsWatermarkShape(Shape shape) =>
         shape.Id?.Value is { } id && (id.StartsWith(RemovableShapeIdPrefix, StringComparison.Ordinal) || id == LockedShapeId);
 
-    private static Header BuildWatermarkHeader(
+    private static Paragraph BuildWatermarkParagraph(
         string text, string fontFamily, int rotationDegrees, string colorHex, string shapeId,
         WatermarkPosition position, double widthPt, double heightPt, double fontSizePt)
     {
@@ -176,8 +224,7 @@ public sealed class DocxWatermarkService
 
         // The run needs w:noProof — Word's convention for machine-generated graphical content.
         var run = new Run(new RunProperties(new NoProof()), new Picture(shape));
-        var paragraph = new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "Header" }), run);
-        return new Header(paragraph);
+        return new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "Header" }), run);
     }
 
     /// <summary>Maps a <see cref="WatermarkPosition"/> to VML's own <c>mso-position-horizontal</c>/<c>-vertical</c> keywords.</summary>

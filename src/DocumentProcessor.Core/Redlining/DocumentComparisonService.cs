@@ -106,13 +106,40 @@ public sealed class DocumentComparisonService(ILogger<DocumentComparisonService>
             if (originalParagraphs[i].InnerText != revisedParagraphs[i].InnerText)
                 continue; // a real content change — WmlComparer's insert/delete counts already cover this
 
-            var originalFormatting = string.Concat(originalParagraphs[i].Descendants<RunProperties>().Select(p => p.OuterXml));
-            var revisedFormatting = string.Concat(revisedParagraphs[i].Descendants<RunProperties>().Select(p => p.OuterXml));
-            if (originalFormatting != revisedFormatting)
+            if (!SameRunFormatting(originalParagraphs[i], revisedParagraphs[i]))
                 count++;
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Compares two paragraphs' run formatting by walking both <c>w:rPr</c> sequences in step.
+    /// Previously this concatenated every <c>OuterXml</c> into two strings and compared those,
+    /// which re-serialised each subtree to a string on every access and always built both strings
+    /// in full — even when they differed at the first character. On a 2,000-paragraph contract with
+    /// ~20 runs per paragraph that was tens of thousands of XML serialisations per comparison.
+    /// </summary>
+    private static bool SameRunFormatting(Paragraph original, Paragraph revised)
+    {
+        using var left = original.Descendants<RunProperties>().GetEnumerator();
+        using var right = revised.Descendants<RunProperties>().GetEnumerator();
+
+        while (true)
+        {
+            var leftHasMore = left.MoveNext();
+            var rightHasMore = right.MoveNext();
+
+            if (leftHasMore != rightHasMore)
+                return false;
+            if (!leftHasMore)
+                return true;
+
+            // Serialising a single rPr is cheap and bounded; the previous cost was concatenating
+            // every one of them into a whole-paragraph string before any comparison happened.
+            if (!string.Equals(left.Current.OuterXml, right.Current.OuterXml, StringComparison.Ordinal))
+                return false;
+        }
     }
 
     private static double ComputePercentChanged(string originalPath, List<WmlComparer.WmlComparerRevision> inserted, List<WmlComparer.WmlComparerRevision> deleted)
@@ -129,30 +156,57 @@ public sealed class DocumentComparisonService(ILogger<DocumentComparisonService>
     private static int CountWords(string text) =>
         text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
 
+    /// <summary>
+    /// Maps each revision to the heading it falls under, in document order.
+    /// <para>
+    /// Built as one forward pass that records, for every paragraph, the most recent heading seen so
+    /// far — then each revision is an O(1) lookup. The obvious implementation walks backward from
+    /// each revision instead, but <c>ElementsBeforeSelf()</c> on an <see cref="XElement"/>
+    /// enumerates forward from the parent's first child, and <c>LastOrDefault()</c> forces that
+    /// whole prefix to be enumerated, so stepping back a single paragraph costs O(position). Across
+    /// R revisions in a P-paragraph document that is O(R·P²) — on a 200-page contract with a
+    /// heavily negotiated redline, billions of traversal steps and a multi-minute hang.
+    /// </para>
+    /// </summary>
     private static IReadOnlyList<string> FindAffectedHeadings(IEnumerable<WmlComparer.WmlComparerRevision> revisions)
     {
-        var headings = new List<string>();
+        var revisionList = revisions.ToList();
+        if (revisionList.Count == 0)
+            return [];
 
-        foreach (var revision in revisions)
+        // Every revision in one comparison belongs to the same redlined document, so the heading
+        // index only has to be built once, from whichever revision can point at the body.
+        var body = revisionList
+            .Select(r => (r.RevisionXElement ?? r.ContentXElement)?.AncestorsAndSelf(W + "body").FirstOrDefault())
+            .FirstOrDefault(b => b is not null);
+
+        if (body is null)
+            return [];
+
+        var headingByParagraph = new Dictionary<XElement, string>();
+        string? currentHeading = null;
+        foreach (var paragraph in body.Elements(W + "p"))
+        {
+            var styleId = paragraph.Element(W + "pPr")?.Element(W + "pStyle")?.Attribute(W + "val")?.Value;
+            if (styleId is not null && styleId.StartsWith("Heading", StringComparison.OrdinalIgnoreCase))
+                currentHeading = string.Concat(paragraph.Descendants(W + "t").Select(t => t.Value));
+
+            if (currentHeading is not null)
+                headingByParagraph[paragraph] = currentHeading;
+        }
+
+        // Ordered set: callers get headings in document order, but membership testing stays O(1)
+        // rather than the linear List.Contains scan this previously did per revision.
+        var headings = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var revision in revisionList)
         {
             var element = revision.RevisionXElement ?? revision.ContentXElement;
             var paragraph = element?.AncestorsAndSelf(W + "p").FirstOrDefault();
 
-            // Walk backward through preceding sibling paragraphs until a Heading-styled one is found —
-            // a change doesn't have to sit *inside* the heading paragraph itself to fall "under" it.
-            while (paragraph is not null)
-            {
-                var styleId = paragraph.Element(W + "pPr")?.Element(W + "pStyle")?.Attribute(W + "val")?.Value;
-                if (styleId is not null && styleId.StartsWith("Heading", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headingText = string.Concat(paragraph.Descendants(W + "t").Select(t => t.Value));
-                    if (!headings.Contains(headingText))
-                        headings.Add(headingText);
-                    break;
-                }
-
-                paragraph = paragraph.ElementsBeforeSelf(W + "p").LastOrDefault();
-            }
+            if (paragraph is not null && headingByParagraph.TryGetValue(paragraph, out var heading) && seen.Add(heading))
+                headings.Add(heading);
         }
 
         return headings;
