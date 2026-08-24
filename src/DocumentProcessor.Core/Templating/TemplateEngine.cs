@@ -32,7 +32,7 @@ public sealed record TemplateFillResult(IReadOnlyList<string> Warnings);
 /// their own paragraph — the same convention mail-merge tools like docxtemplater use, and necessary
 /// because these operate on whole paragraph ranges, not inline text spans.
 /// </summary>
-public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
+public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null) : ITemplateEngine
 {
     private readonly ILogger<TemplateEngine> _logger = logger ?? NullLogger<TemplateEngine>.Instance;
 

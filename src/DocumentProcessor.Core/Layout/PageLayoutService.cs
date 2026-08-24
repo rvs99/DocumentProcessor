@@ -51,7 +51,7 @@ public sealed record PageSize(int WidthTwips, int HeightTwips, PageOrientation O
 /// parameter exists so a future multi-section document (independently laid-out parts within one
 /// docx) doesn't require reworking this API, only calling it once per section.
 /// </remarks>
-public sealed class PageLayoutService
+public sealed class PageLayoutService : IPageLayoutService
 {
     public void SetPageSize(string docxPath, PageSize size, int? sectionIndex = null)
     {

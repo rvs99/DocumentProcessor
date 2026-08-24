@@ -43,7 +43,7 @@ public sealed record TableSpec(
 /// Builds Word tables programmatically (e.g. from a data grid, report, or clause schedule)
 /// and inserts them into an existing .docx, or appends new tables to one.
 /// </summary>
-public sealed class TableGenerationService
+public sealed class TableGenerationService : ITableGenerationService
 {
     /// <summary>Appends a table built from <paramref name="spec"/> to the end of the document body.</summary>
     public void AppendTable(string docxPath, TableSpec spec)

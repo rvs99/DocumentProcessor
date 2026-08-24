@@ -12,7 +12,7 @@ namespace DocumentProcessor.Core.DocumentAssembly;
 /// page opened from another document, or <c>PdfPages.InsertRange</c> for a contiguous block) — no
 /// new dependency, since PDFsharp is already used for watermarking/e-sign elsewhere in this library.
 /// </summary>
-public sealed class PdfAssemblyService
+public sealed class PdfAssemblyService : IPdfAssemblyService
 {
     /// <summary>Concatenates <paramref name="pdfPaths"/> in order into one PDF at <paramref name="outputPath"/>.</summary>
     public void MergePdfs(IReadOnlyList<string> pdfPaths, string outputPath, CancellationToken cancellationToken = default)

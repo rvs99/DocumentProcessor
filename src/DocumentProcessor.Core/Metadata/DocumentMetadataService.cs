@@ -11,7 +11,7 @@ namespace DocumentProcessor.Core.Metadata;
 /// (what that panel's "Advanced Properties &gt; Custom" tab manages) — e.g. a matter number, contract
 /// value, or approval status a downstream system needs without parsing document content.
 /// </summary>
-public sealed class DocumentMetadataService
+public sealed class DocumentMetadataService : IDocumentMetadataService
 {
     // Fixed per the OOXML/COM custom-properties convention (every custom document property uses
     // this exact format id — it identifies the "Summary Information"-style property set, not this

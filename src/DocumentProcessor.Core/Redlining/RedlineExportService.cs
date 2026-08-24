@@ -18,7 +18,7 @@ public sealed record RedlineExportPaths(string CleanDocx, string RedlinedDocx, s
 /// w:ins/w:del markup renders as Word itself would show it (underline/strikethrough), since that's
 /// standard OOXML any compliant renderer honors — this just wires up the previously-unexercised path.
 /// </summary>
-public sealed class RedlineExportService(ILogger<RedlineExportService>? logger = null)
+public sealed class RedlineExportService(ILogger<RedlineExportService>? logger = null) : IRedlineExportService
 {
     private readonly ILogger<RedlineExportService> _logger = logger ?? NullLogger<RedlineExportService>.Instance;
 

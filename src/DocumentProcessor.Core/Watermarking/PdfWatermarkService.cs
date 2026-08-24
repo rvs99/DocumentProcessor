@@ -17,7 +17,7 @@ namespace DocumentProcessor.Core.Watermarking;
 /// watermarking tools use. (Contrast with ESignFieldService's PDF anchors, which must stay real
 /// text on purpose — e-signature platforms detect them by scanning the page's text layer.)
 /// </remarks>
-public sealed class PdfWatermarkService
+public sealed class PdfWatermarkService : IPdfWatermarkService
 {
     private const float SupersampleScale = 2f;
 

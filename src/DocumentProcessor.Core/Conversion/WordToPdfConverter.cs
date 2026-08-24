@@ -12,7 +12,7 @@ public sealed class WordToPdfConversionOptions
     /// (installed via `apt-get install libreoffice-writer`); on a native Windows install it's
     /// "C:\Program Files\LibreOffice\program\soffice.exe". Ignored when <see cref="UseWslDistro"/> is set.
     /// </summary>
-    public string ExecutablePath { get; init; } = OperatingSystem.IsWindows()
+    public string ExecutablePath { get; set; } = OperatingSystem.IsWindows()
         ? @"C:\Program Files\LibreOffice\program\soffice.exe"
         : "/usr/bin/soffice";
 
@@ -22,9 +22,9 @@ public sealed class WordToPdfConversionOptions
     /// need to be installed as a Windows desktop app. Not used in production container deployments,
     /// where <see cref="ExecutablePath"/> points straight at the Linux soffice binary.
     /// </summary>
-    public string? UseWslDistro { get; init; }
+    public string? UseWslDistro { get; set; }
 
-    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(120);
+    public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(120);
 
     /// <summary>
     /// How long to wait for a free conversion slot before giving up. Conversions are capped
@@ -32,7 +32,7 @@ public sealed class WordToPdfConversionOptions
     /// spawn an unbounded number of LibreOffice processes. Failing fast here is deliberate: under
     /// saturation it is better to shed load than to queue every request until it times out anyway.
     /// </summary>
-    public TimeSpan QueueTimeout { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan QueueTimeout { get; set; } = TimeSpan.FromSeconds(60);
 }
 
 /// <summary>
@@ -41,7 +41,7 @@ public sealed class WordToPdfConversionOptions
 /// external process with an isolated user profile per call, so concurrent conversions on the same
 /// host don't contend for a shared LibreOffice profile lock.
 /// </summary>
-public sealed class WordToPdfConverter
+public sealed class WordToPdfConverter : IWordToPdfConverter
 {
     private readonly WordToPdfConversionOptions _options;
 

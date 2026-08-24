@@ -24,7 +24,7 @@ public sealed record XmpMetadata(
 /// <c>/Type /Metadata /Subtype /XML</c> referenced from the catalog's <c>/Metadata</c> entry is
 /// exactly what Acrobat/Word/veraPDF write themselves, just built by hand here instead.
 /// </summary>
-public sealed class PdfMetadataService
+public sealed class PdfMetadataService : IPdfMetadataService
 {
     public void SetXmpMetadata(string pdfPath, string outputPath, XmpMetadata metadata)
     {

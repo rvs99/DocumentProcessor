@@ -15,7 +15,7 @@ public sealed record FontFamilyFiles(string Regular, string? Bold = null, string
 /// or legal templates depend on a specific typeface, and a prerequisite for high-fidelity docx→PDF
 /// conversion when the conversion host doesn't have the font installed system-wide.
 /// </summary>
-public sealed class FontEmbeddingService
+public sealed class FontEmbeddingService : IFontEmbeddingService
 {
     /// <summary>
     /// Embeds the given font family's files into the document and marks the document as using

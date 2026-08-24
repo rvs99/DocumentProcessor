@@ -5,18 +5,18 @@ namespace DocumentProcessor.Core.Format;
 /// that one's name and namespace are specific to the docx→PDF path) rather than reusing it.</summary>
 public sealed class LegacyDocConversionOptions
 {
-    public string ExecutablePath { get; init; } = OperatingSystem.IsWindows()
+    public string ExecutablePath { get; set; } = OperatingSystem.IsWindows()
         ? @"C:\Program Files\LibreOffice\program\soffice.exe"
         : "/usr/bin/soffice";
 
-    public string? UseWslDistro { get; init; }
+    public string? UseWslDistro { get; set; }
 
-    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(120);
+    public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(120);
 
     /// <summary>How long to wait for a free conversion slot before giving up. Shares the same
     /// process-wide cap as docx-to-PDF conversion, so a mixed .doc/.docx workload cannot spawn
     /// twice the intended number of LibreOffice processes.</summary>
-    public TimeSpan QueueTimeout { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan QueueTimeout { get; set; } = TimeSpan.FromSeconds(60);
 }
 
 /// <summary>
@@ -29,7 +29,7 @@ public sealed class LegacyDocConversionOptions
 /// docx</c> handles the legacy format conversion, and everything downstream is exactly the same
 /// OpenXml pipeline .docx input already goes through.
 /// </summary>
-public sealed class LegacyDocConverter
+public sealed class LegacyDocConverter : ILegacyDocConverter
 {
     private readonly LegacyDocConversionOptions _options;
 

@@ -14,7 +14,7 @@ public sealed record DanglingReference(string BookmarkName, string FieldType);
 /// common case from Insert &gt; Cross-reference, and the <c>w:fldChar</c>/<c>w:instrText</c> triplet
 /// Word converts to after certain edits).
 /// </summary>
-public sealed class CrossReferenceValidator
+public sealed class CrossReferenceValidator : ICrossReferenceValidator
 {
     private static readonly Regex ReferencePattern = new(@"\b(REF|PAGEREF)\s+(\S+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 

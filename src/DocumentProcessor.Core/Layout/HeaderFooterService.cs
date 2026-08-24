@@ -14,7 +14,7 @@ namespace DocumentProcessor.Core.Layout;
 /// <see cref="Watermarking.DocxWatermarkService"/>'s header injection, which is single-purpose (it
 /// only ever hosts the watermark shape). Applies to every section in the document.
 /// </summary>
-public sealed class HeaderFooterService
+public sealed class HeaderFooterService : IHeaderFooterService
 {
     /// <param name="type">
     /// <see cref="HeaderFooterValues.Default"/> (every page), <see cref="HeaderFooterValues.First"/>

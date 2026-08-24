@@ -17,7 +17,7 @@ public sealed record PdfVisualDiffResult(bool PagesMatch, int ComparedPageCount,
 /// byte-level pixel comparison). Useful together: text diff catches wording changes, visual diff
 /// catches formatting/layout/image changes that don't show up in extracted text.
 /// </summary>
-public sealed class PdfComparisonService
+public sealed class PdfComparisonService : IPdfComparisonService
 {
     public PdfTextDiffResult CompareText(string pdfPathA, string pdfPathB)
     {

@@ -26,7 +26,7 @@ public enum EditorGroup { Everyone, Administrators, Contributors, Editors, Owner
 /// range exceptions that stay editable despite it — e.g. lock an entire contract to Tracked Changes
 /// only, while leaving a specific signature-block paragraph range freely editable for both parties.
 /// </summary>
-public sealed class DocumentProtectionService
+public sealed class DocumentProtectionService : IDocumentProtectionService
 {
     /// <summary>
     /// Restricts editing for the whole document to <paramref name="restriction"/>. When

@@ -22,7 +22,7 @@ public sealed record TrackedChange(string? ChangeId, string? Author, DateTime? D
 /// Scope: covers run-level insertions/deletions, which is the vast majority of real-world tracked
 /// changes. Paragraph-mark and formatting-change revisions (pPrChange/rPrChange) are left as-is.
 /// </summary>
-public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = null)
+public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = null) : ITrackChangesService
 {
     private readonly ILogger<TrackChangesService> _logger = logger ?? NullLogger<TrackChangesService>.Instance;
 

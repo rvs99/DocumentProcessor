@@ -28,7 +28,7 @@ public enum ContentControlLockMode
 /// Reads and replaces the values of Word content controls (structured document tags, w:sdt)
 /// identified by their tag — the standard mechanism for template-driven contract assembly.
 /// </summary>
-public sealed class ContentControlService(ILogger<ContentControlService>? logger = null)
+public sealed class ContentControlService(ILogger<ContentControlService>? logger = null) : IContentControlService
 {
     private readonly ILogger<ContentControlService> _logger = logger ?? NullLogger<ContentControlService>.Instance;
 

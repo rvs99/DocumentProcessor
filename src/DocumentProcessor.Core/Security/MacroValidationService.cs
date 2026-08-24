@@ -10,7 +10,7 @@ public sealed record TemplateValidationResult(bool IsValid, IReadOnlyList<string
 /// document is used as a fill-in template — e.g. reject a macro-enabled file uploaded as a contract
 /// template, since executing arbitrary VBA was never part of that workflow's threat model.
 /// </summary>
-public sealed class MacroValidationService
+public sealed class MacroValidationService : IMacroValidationService
 {
     public bool ContainsMacros(string docxPath)
     {

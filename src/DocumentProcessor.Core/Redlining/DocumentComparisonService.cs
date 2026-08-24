@@ -45,7 +45,7 @@ public sealed record ComparisonSummary(
 /// standard Word tracked changes (w:ins/w:del), openable and reviewable in Word itself — via
 /// Clippit's WmlComparer, a maintained fork of Open-Xml-PowerTools' comparison engine.
 /// </summary>
-public sealed class DocumentComparisonService(ILogger<DocumentComparisonService>? logger = null)
+public sealed class DocumentComparisonService(ILogger<DocumentComparisonService>? logger = null) : IDocumentComparisonService
 {
     private readonly ILogger<DocumentComparisonService> _logger = logger ?? NullLogger<DocumentComparisonService>.Instance;
     private static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";

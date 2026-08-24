@@ -17,7 +17,7 @@ namespace DocumentProcessor.Core.ESign;
 /// For docx, the anchor is additionally wrapped in a tagged content control so platforms that scan
 /// content controls (rather than plain text) can also detect it.
 /// </summary>
-public sealed class ESignFieldService
+public sealed class ESignFieldService : IESignFieldService
 {
     /// <summary>Appends a paragraph containing a tagged anchor for an e-signature field to the end of the document.</summary>
     public void InjectDocxAnchor(string docxPath, string anchorText, string tag = "ESignatureField")

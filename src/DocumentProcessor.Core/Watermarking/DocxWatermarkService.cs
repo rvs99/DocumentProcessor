@@ -26,7 +26,7 @@ namespace DocumentProcessor.Core.Watermarking;
 /// <see cref="Watermarking.PdfWatermarkService"/> to the resulting PDF — that service rasterizes
 /// the watermark, which is what actually makes it non-selectable.
 /// </remarks>
-public sealed class DocxWatermarkService
+public sealed class DocxWatermarkService : IDocxWatermarkService
 {
     /// <summary>
     /// Word's Design → Watermark UI (both "Remove Watermark" and the predefined gallery's

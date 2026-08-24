@@ -17,7 +17,7 @@ public sealed record ParagraphInfo(int Index, string Text);
 /// so the transplanted content doesn't collide with or inherit the target's styles — the piece that
 /// is otherwise unsolved hand-rolled work in comparable free tooling.
 /// </summary>
-public sealed class ClauseTransplantService(ILogger<ClauseTransplantService>? logger = null)
+public sealed class ClauseTransplantService(ILogger<ClauseTransplantService>? logger = null) : IClauseTransplantService
 {
     private readonly ILogger<ClauseTransplantService> _logger = logger ?? NullLogger<ClauseTransplantService>.Instance;
 

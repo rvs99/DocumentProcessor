@@ -18,7 +18,7 @@ namespace DocumentProcessor.Core.DocumentAssembly;
 /// the document is opened in Word, so a caller doesn't have to instruct the recipient to press F9.</item>
 /// </list>
 /// </summary>
-public sealed class FieldUpdateService
+public sealed class FieldUpdateService : IFieldUpdateService
 {
     /// <summary>Marks every field in the document dirty (<c>w:dirty="true"</c> on simple fields and
     /// on the "begin" fldChar of complex fields) so Word recomputes their displayed text — TOC

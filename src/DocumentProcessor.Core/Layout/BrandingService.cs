@@ -22,7 +22,7 @@ public sealed record TenantBrandingSpec(
 /// <see cref="HeaderFooterService"/>) and/or a run-color override on the target heading styles in
 /// the document's style definitions part — a plain OOXML <c>w:color</c> change, not a full theme
 /// swap, so it applies immediately without depending on which Office theme the recipient has.</summary>
-public sealed class BrandingService
+public sealed class BrandingService : IBrandingService
 {
     private readonly HeaderFooterService _headerFooterService = new();
 

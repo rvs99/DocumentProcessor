@@ -20,7 +20,7 @@ public sealed record PdfPermissions(
 /// owner password restricts permissions (printing/editing/etc.) while the document still opens
 /// without a prompt; a user password requires that password just to open the document at all.
 /// </summary>
-public sealed class PdfProtectionService
+public sealed class PdfProtectionService : IPdfProtectionService
 {
     public void ProtectPdf(string pdfPath, string outputPath, string? ownerPassword = null, string? userPassword = null, PdfPermissions? permissions = null)
     {
