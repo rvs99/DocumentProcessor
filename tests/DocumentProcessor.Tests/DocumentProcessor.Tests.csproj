@@ -25,6 +25,8 @@
 
   <ItemGroup>
     <None Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The font-embedding tests need a real TTF on disk; same asset the demo links. -->
+    <None Include="..\..\src\DocumentProcessor.Core\Assets\Fonts\RobotoMono-Regular.ttf" Link="Assets\Fonts\RobotoMono-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

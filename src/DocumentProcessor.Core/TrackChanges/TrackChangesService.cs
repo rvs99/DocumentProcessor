@@ -31,9 +31,13 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
     {
         using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TrackChangesService.AcceptAll");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        RevisionAccepter.AcceptRevisions(doc);
+        AcceptAllCore(doc);
         _logger.LogInformation("Accepted all tracked changes in {DocxPath}", docxPath);
     }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void AcceptAllCore(WordprocessingDocument doc) => RevisionAccepter.AcceptRevisions(doc);
 
     /// <summary>Accepts only the tracked changes made by <paramref name="author"/> (an exact match
     /// against <c>w:author</c>), leaving every other author's changes still pending.</summary>
@@ -60,8 +64,14 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
     public bool HasTrackedChanges(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        return RevisionAccepter.HasTrackedRevisions(doc);
+        return HasTrackedChangesCore(doc);
     }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static bool HasTrackedChangesCore(WordprocessingDocument doc)
+    {        return RevisionAccepter.HasTrackedRevisions(doc);
+}
 
     /// <summary>Lists every unresolved tracked change with its author, timestamp, id, kind, and the
     /// (0-based) paragraph index it lives in — for building a review UI or audit trail without the
@@ -69,7 +79,13 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
     public IReadOnlyList<TrackedChange> GetTrackedChanges(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
+        return GetTrackedChangesCore(doc);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static IReadOnlyList<TrackedChange> GetTrackedChangesCore(WordprocessingDocument doc)
+    {        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
         var paragraphs = body.Elements<Paragraph>().ToList();
 
         var changes = new List<TrackedChange>();
@@ -89,12 +105,19 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
         }
 
         return changes;
-    }
+}
 
     private void AcceptWhere(string docxPath, Func<string?, string?, bool> matches)
     {
         using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TrackChangesService.AcceptWhere");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var resolved = AcceptWhereCore(doc, matches);
+        _logger.LogInformation("Accepted {Count} tracked change(s) in {DocxPath}", resolved, docxPath);
+    }
+
+    /// <summary>Runs against an already-open package. Returns how many changes were resolved.</summary>
+    internal static int AcceptWhereCore(WordprocessingDocument doc, Func<string?, string?, bool> matches)
+    {
         var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
         var resolvedCount = 0;
 
@@ -119,13 +142,20 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
         }
 
         document.Save();
-        _logger.LogInformation("Accepted {Count} tracked change(s) in {DocxPath}", resolvedCount, docxPath);
+        return resolvedCount;
     }
 
     private void RejectWhere(string docxPath, Func<string?, string?, bool> matches)
     {
         using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TrackChangesService.RejectWhere");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        var resolved = RejectWhereCore(doc, matches);
+        _logger.LogInformation("Rejected {Count} tracked change(s) in {DocxPath}", resolved, docxPath);
+    }
+
+    /// <summary>Runs against an already-open package. Returns how many changes were resolved.</summary>
+    internal static int RejectWhereCore(WordprocessingDocument doc, Func<string?, string?, bool> matches)
+    {
         var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
         var resolvedCount = 0;
 
@@ -150,9 +180,8 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
             resolvedCount++;
         }
 
-        _logger.LogInformation("Rejected {Count} tracked change(s) in {DocxPath}", resolvedCount, docxPath);
-
         document.Save();
+        return resolvedCount;
     }
 
     private static void RestoreDeletedText(DeletedRun deletedRun)

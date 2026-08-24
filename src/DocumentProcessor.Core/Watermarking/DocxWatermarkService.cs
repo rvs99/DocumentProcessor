@@ -58,8 +58,7 @@ public sealed class DocxWatermarkService : IDocxWatermarkService
     /// <param name="widthPt">Width of the shape's bounding box, in points. The text auto-fits to this box (<c>mso-fit-shape-to-text</c>).</param>
     /// <param name="heightPt">Height of the shape's bounding box, in points.</param>
     /// <param name="fontSizePt">Font size of the watermark text, in points.</param>
-    public void AddTextWatermark(
-        string docxPath,
+    public void AddTextWatermark(string docxPath,
         string text,
         string fontFamily = "Calibri",
         int rotationDegrees = -45,
@@ -71,7 +70,21 @@ public sealed class DocxWatermarkService : IDocxWatermarkService
         double fontSizePt = 72)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        AddTextWatermarkCore(doc, text, fontFamily, rotationDegrees, colorHex, removable, position, widthPt, heightPt, fontSizePt);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void AddTextWatermarkCore(WordprocessingDocument doc, string text,
+        string fontFamily = "Calibri",
+        int rotationDegrees = -45,
+        string colorHex = "C0C0C0",
+        bool removable = true,
+        WatermarkPosition position = WatermarkPosition.Center,
+        double widthPt = 415,
+        double heightPt = 207.5,
+        double fontSizePt = 72)
+    {        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
         var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
         var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
@@ -113,7 +126,7 @@ public sealed class DocxWatermarkService : IDocxWatermarkService
         }
 
         document.Save();
-    }
+}
 
     /// <summary>Returns the header part the section's default <c>w:headerReference</c> points at,
     /// creating and wiring one only when the section has none.</summary>
@@ -162,7 +175,13 @@ public sealed class DocxWatermarkService : IDocxWatermarkService
     public bool RemoveWatermark(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        return RemoveWatermarkCore(doc);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static bool RemoveWatermarkCore(WordprocessingDocument doc)
+    {        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
 
         var removedAny = false;
         foreach (var headerPart in mainPart.HeaderParts)
@@ -187,7 +206,7 @@ public sealed class DocxWatermarkService : IDocxWatermarkService
         }
 
         return removedAny;
-    }
+}
 
     private static bool IsWatermarkShape(Shape shape) =>
         shape.Id?.Value is { } id && (id.StartsWith(RemovableShapeIdPrefix, StringComparison.Ordinal) || id == LockedShapeId);

@@ -25,7 +25,13 @@ public sealed class FontEmbeddingService : IFontEmbeddingService
     public void EmbedFontFamily(string docxPath, string fontFamilyName, FontFamilyFiles files)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        EmbedFontFamilyCore(doc, fontFamilyName, files);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void EmbedFontFamilyCore(WordprocessingDocument doc, string fontFamilyName, FontFamilyFiles files)
+    {        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
 
         var fontTablePart = mainPart.FontTablePart ?? mainPart.AddNewPart<FontTablePart>();
         fontTablePart.Fonts ??= new Fonts();
@@ -52,13 +58,19 @@ public sealed class FontEmbeddingService : IFontEmbeddingService
         if (!settingsPart.Settings.Elements<EmbedTrueTypeFonts>().Any())
             settingsPart.Settings.PrependChild(new EmbedTrueTypeFonts { Val = true });
         settingsPart.Settings.Save();
-    }
+}
 
     /// <summary>Sets every run in the document to use <paramref name="fontFamilyName"/> for all script types.</summary>
     public void ApplyFontToAllRuns(string docxPath, string fontFamilyName)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
+        ApplyFontToAllRunsCore(doc, fontFamilyName);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void ApplyFontToAllRunsCore(WordprocessingDocument doc, string fontFamilyName)
+    {        var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
 
         foreach (var run in document.Descendants<Run>())
         {
@@ -73,13 +85,19 @@ public sealed class FontEmbeddingService : IFontEmbeddingService
         }
 
         document.Save();
-    }
+}
 
     /// <summary>Lists the font families currently embedded in the document.</summary>
     public IReadOnlyList<string> ListEmbeddedFonts(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var fontTablePart = doc.MainDocumentPart?.FontTablePart;
+        return ListEmbeddedFontsCore(doc);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static IReadOnlyList<string> ListEmbeddedFontsCore(WordprocessingDocument doc)
+    {        var fontTablePart = doc.MainDocumentPart?.FontTablePart;
         if (fontTablePart?.Fonts is null)
             return [];
 
@@ -88,7 +106,7 @@ public sealed class FontEmbeddingService : IFontEmbeddingService
             .Where(name => name is not null)
             .Select(name => name!)
             .ToList();
-    }
+}
 
     private static string EmbedFontFile(FontTablePart fontTablePart, string fontFilePath)
     {

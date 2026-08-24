@@ -49,6 +49,12 @@ public sealed class DocumentSession : IDisposable
         ContentControls = new ContentControlOperations(this, Logger<ContentControlService>());
         Metadata = new DocumentMetadataOperations(this);
         Tables = new TableOperations(this);
+        TrackChanges = new TrackChangesOperations(this);
+        PageLayout = new PageLayoutOperations(this);
+        Watermark = new WatermarkOperations(this);
+        Protection = new DocumentProtectionOperations(this);
+        Fonts = new FontOperations(this);
+        Fields = new FieldOperations(this);
     }
 
     /// <summary>
@@ -136,9 +142,32 @@ public sealed class DocumentSession : IDisposable
         }
     }
 
+    /// <summary>Content-control (structured document tag) operations.</summary>
     public ContentControlOperations ContentControls { get; }
+
+    /// <summary>Core and custom document properties.</summary>
     public DocumentMetadataOperations Metadata { get; }
+
+    /// <summary>Table generation and prototype-row population.</summary>
     public TableOperations Tables { get; }
+
+    /// <summary>Accepting and rejecting tracked changes, and reading them as data.</summary>
+    public TrackChangesOperations TrackChanges { get; }
+
+    /// <summary>Page size, margins, columns, and section/page breaks.</summary>
+    public PageLayoutOperations PageLayout { get; }
+
+    /// <summary>Adding and removing the docx watermark.</summary>
+    public WatermarkOperations Watermark { get; }
+
+    /// <summary>Editing restrictions and permitted ranges.</summary>
+    public DocumentProtectionOperations Protection { get; }
+
+    /// <summary>Embedding font families and applying them.</summary>
+    public FontOperations Fonts { get; }
+
+    /// <summary>Field dirtying, update-on-open, and cross-reference validation.</summary>
+    public FieldOperations Fields { get; }
 
     /// <summary>Flushes every pending change into the package and returns it as bytes. The session
     /// stays usable afterwards, so this can be called more than once (e.g. to snapshot an

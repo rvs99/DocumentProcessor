@@ -56,7 +56,13 @@ public sealed class PageLayoutService : IPageLayoutService
     public void SetPageSize(string docxPath, PageSize size, int? sectionIndex = null)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = GetDocument(doc);
+        SetPageSizeCore(doc, size, sectionIndex);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void SetPageSizeCore(WordprocessingDocument doc, PageSize size, int? sectionIndex = null)
+    {        var document = GetDocument(doc);
 
         foreach (var sectPr in ResolveSections(document, sectionIndex))
         {
@@ -70,12 +76,18 @@ public sealed class PageLayoutService : IPageLayoutService
         }
 
         document.Save();
-    }
+}
 
     public void SetMargins(string docxPath, PageMargins margins, int? sectionIndex = null)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = GetDocument(doc);
+        SetMarginsCore(doc, margins, sectionIndex);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void SetMarginsCore(WordprocessingDocument doc, PageMargins margins, int? sectionIndex = null)
+    {        var document = GetDocument(doc);
 
         foreach (var sectPr in ResolveSections(document, sectionIndex))
         {
@@ -93,7 +105,7 @@ public sealed class PageLayoutService : IPageLayoutService
         }
 
         document.Save();
-    }
+}
 
     public void SetColumns(string docxPath, int columnCount, int spacingTwips = 720, int? sectionIndex = null)
     {
@@ -101,6 +113,13 @@ public sealed class PageLayoutService : IPageLayoutService
             throw new ArgumentOutOfRangeException(nameof(columnCount), "Must have at least 1 column.");
 
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        SetColumnsCore(doc, columnCount, spacingTwips, sectionIndex);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void SetColumnsCore(WordprocessingDocument doc, int columnCount, int spacingTwips = 720, int? sectionIndex = null)
+    {
         var document = GetDocument(doc);
 
         foreach (var sectPr in ResolveSections(document, sectionIndex))
@@ -125,7 +144,13 @@ public sealed class PageLayoutService : IPageLayoutService
     public void InsertPageBreak(string docxPath, int beforeParagraphIndex)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = GetDocument(doc);
+        InsertPageBreakCore(doc, beforeParagraphIndex);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void InsertPageBreakCore(WordprocessingDocument doc, int beforeParagraphIndex)
+    {        var document = GetDocument(doc);
         var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var paragraphs = body.Elements<Paragraph>().ToList();
@@ -143,7 +168,7 @@ public sealed class PageLayoutService : IPageLayoutService
             body.InsertBefore(breakParagraph, body.Elements<SectionProperties>().FirstOrDefault());
 
         document.Save();
-    }
+}
 
     /// <summary>
     /// Splits the document into two sections at the top-level paragraph boundary
@@ -165,7 +190,13 @@ public sealed class PageLayoutService : IPageLayoutService
     public void InsertSectionBreak(string docxPath, int beforeParagraphIndex, SectionMarkValues? breakType = null)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = GetDocument(doc);
+        InsertSectionBreakCore(doc, beforeParagraphIndex, breakType);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void InsertSectionBreakCore(WordprocessingDocument doc, int beforeParagraphIndex, SectionMarkValues? breakType = null)
+    {        var document = GetDocument(doc);
         var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var paragraphs = body.Elements<Paragraph>().ToList();
@@ -200,7 +231,7 @@ public sealed class PageLayoutService : IPageLayoutService
         anchorParagraph.ParagraphProperties.SectionProperties = newSectPr;
 
         document.Save();
-    }
+}
 
     /// <summary>
     /// Sets the document's default paragraph spacing (space-after, line spacing) on both
@@ -212,7 +243,13 @@ public sealed class PageLayoutService : IPageLayoutService
     public void SetDefaultParagraphSpacing(string docxPath, int afterTwips, int lineTwips, LineSpacingRuleValues lineRule)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        SetDefaultParagraphSpacingCore(doc, afterTwips, lineTwips, lineRule);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void SetDefaultParagraphSpacingCore(WordprocessingDocument doc, int afterTwips, int lineTwips, LineSpacingRuleValues lineRule)
+    {        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
 
         var stylesPart = mainPart.StyleDefinitionsPart ?? mainPart.AddNewPart<StyleDefinitionsPart>();
         stylesPart.Styles ??= new Styles();
@@ -244,7 +281,7 @@ public sealed class PageLayoutService : IPageLayoutService
         normalStyle.StyleParagraphProperties.AppendChild((SpacingBetweenLines)spacing.CloneNode(true));
 
         stylesPart.Styles.Save();
-    }
+}
 
     private static Document GetDocument(WordprocessingDocument doc) =>
         doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");

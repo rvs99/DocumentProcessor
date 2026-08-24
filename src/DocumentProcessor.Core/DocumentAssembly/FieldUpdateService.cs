@@ -26,7 +26,13 @@ public sealed class FieldUpdateService : IFieldUpdateService
     public void MarkAllFieldsDirty(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
+        MarkAllFieldsDirtyCore(doc);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void MarkAllFieldsDirtyCore(WordprocessingDocument doc)
+    {        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
 
         foreach (var simpleField in body.Descendants<SimpleField>())
             simpleField.Dirty = true;
@@ -35,7 +41,7 @@ public sealed class FieldUpdateService : IFieldUpdateService
             fieldChar.Dirty = true;
 
         doc.MainDocumentPart!.Document!.Save();
-    }
+}
 
     /// <summary>Sets (or clears) <c>w:updateFields</c> in document settings, so Word prompts to
     /// (or automatically does, per the user's Word options) update every field as soon as the
@@ -44,7 +50,13 @@ public sealed class FieldUpdateService : IFieldUpdateService
     public void SetUpdateFieldsOnOpen(string docxPath, bool updateOnOpen = true)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        SetUpdateFieldsOnOpenCore(doc, updateOnOpen);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void SetUpdateFieldsOnOpenCore(WordprocessingDocument doc, bool updateOnOpen = true)
+    {        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
         var settingsPart = mainPart.DocumentSettingsPart ?? mainPart.AddNewPart<DocumentSettingsPart>();
         settingsPart.Settings ??= new Settings();
 
@@ -53,5 +65,5 @@ public sealed class FieldUpdateService : IFieldUpdateService
             settingsPart.Settings.PrependChild(new UpdateFieldsOnOpen { Val = true });
 
         settingsPart.Settings.Save();
-    }
+}
 }

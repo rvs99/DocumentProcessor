@@ -40,7 +40,13 @@ public sealed class DocumentProtectionService : IDocumentProtectionService
     public void SetDocumentProtection(string docxPath, EditRestriction restriction, string? password = null)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        SetDocumentProtectionCore(doc, restriction, password);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void SetDocumentProtectionCore(WordprocessingDocument doc, EditRestriction restriction, string? password = null)
+    {        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
         var settingsPart = mainPart.DocumentSettingsPart ?? mainPart.AddNewPart<DocumentSettingsPart>();
         settingsPart.Settings ??= new Settings();
 
@@ -67,20 +73,26 @@ public sealed class DocumentProtectionService : IDocumentProtectionService
 
         settingsPart.Settings.PrependChild(protection);
         settingsPart.Settings.Save();
-    }
+}
 
     /// <summary>Removes document-level protection entirely (no password required by this API — that
     /// check is Word's own UI concern, not a guarantee this library enforces).</summary>
     public void RemoveDocumentProtection(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var settings = doc.MainDocumentPart?.DocumentSettingsPart?.Settings;
+        RemoveDocumentProtectionCore(doc);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void RemoveDocumentProtectionCore(WordprocessingDocument doc)
+    {        var settings = doc.MainDocumentPart?.DocumentSettingsPart?.Settings;
         if (settings is null)
             return;
 
         settings.RemoveAllChildren<DocumentProtection>();
         settings.Save();
-    }
+}
 
     /// <summary>
     /// Marks paragraphs [<paramref name="startParagraphIndex"/>, <paramref name="endParagraphIndex"/>]
@@ -95,6 +107,13 @@ public sealed class DocumentProtectionService : IDocumentProtectionService
             throw new ArgumentOutOfRangeException(nameof(endParagraphIndex), "End index must be >= start index.");
 
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
+        AllowEditingInRangeCore(doc, startParagraphIndex, endParagraphIndex, editorGroup);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static void AllowEditingInRangeCore(WordprocessingDocument doc, int startParagraphIndex, int endParagraphIndex, EditorGroup editorGroup = EditorGroup.Everyone)
+    {
         var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
         var paragraphs = body.Elements<Paragraph>().ToList();
 

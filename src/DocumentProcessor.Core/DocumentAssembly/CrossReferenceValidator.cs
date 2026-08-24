@@ -21,7 +21,13 @@ public sealed class CrossReferenceValidator : ICrossReferenceValidator
     public IReadOnlyList<DanglingReference> Validate(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
+        return ValidateCore(doc);
+    }
+
+    /// <summary>Runs against an already-open package, so a <see cref="Sessions.DocumentSession"/>
+    /// pipeline pays one open/save for the whole sequence instead of one per call.</summary>
+    internal static IReadOnlyList<DanglingReference> ValidateCore(WordprocessingDocument doc)
+    {        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
 
         var bookmarkNames = new HashSet<string>(
             body.Descendants<BookmarkStart>().Select(b => b.Name?.Value).Where(n => n is not null)!);
@@ -29,7 +35,7 @@ public sealed class CrossReferenceValidator : ICrossReferenceValidator
         return FindReferences(body)
             .Where(r => !bookmarkNames.Contains(r.BookmarkName))
             .ToList();
-    }
+}
 
     /// <summary>Every REF/PAGEREF reference within <paramref name="scope"/>, valid or not — used by
     /// callers (e.g. clause removal) that need to compare before/after a structural edit rather than
