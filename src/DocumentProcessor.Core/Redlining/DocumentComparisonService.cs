@@ -16,20 +16,26 @@ public sealed record ChangeSummary(int InsertedCount, int DeletedCount, IReadOnl
 /// estimates how much of the document actually changed and which headings the changes fall under —
 /// useful for a "here's what changed" review summary rather than a raw diff dump.
 /// </summary>
+/// <param name="InsertedCount">Number of inserted revisions.</param>
+/// <param name="DeletedCount">Number of deleted revisions.</param>
+/// <param name="FormatChangeCount">
+/// Paragraphs at the same position in both documents with identical text but different run
+/// formatting (e.g. a bold/italic toggle with no wording change). Confirmed empirically that
+/// WmlComparer's own revision stream contains <em>zero</em> entries for a pure formatting edit — it
+/// diffs text content only — so this is computed as a separate, position-paired pass rather than
+/// derived from the comparer's revisions. Being position-based, a paragraph inserted or removed
+/// earlier in the document can misalign the pairing for everything after it; it is accurate for the
+/// common case of formatting-only edits with no other structural change.
+/// </param>
+/// <param name="PercentChanged">(Words inserted + words deleted) / words in the original document, as a percentage.</param>
+/// <param name="AffectedHeadings">Text of every Heading-styled paragraph that a change falls under.</param>
+/// <param name="InsertedText">The text of each insertion.</param>
+/// <param name="DeletedText">The text of each deletion.</param>
 public sealed record ComparisonSummary(
     int InsertedCount,
     int DeletedCount,
-    /// <summary>Paragraphs at the same position in both documents with identical text but different
-    /// run formatting (e.g. a bold/italic toggle with no wording change). Confirmed empirically that
-    /// WmlComparer's own revision stream contains *zero* entries for a pure formatting edit — it
-    /// diffs text content only — so this is computed as a separate, position-paired pass rather than
-    /// derived from <see cref="WmlComparer.GetRevisions"/>. Being position-based, a paragraph
-    /// inserted/removed earlier in the document can misalign this pairing for everything after it;
-    /// it's accurate for the common case (formatting-only edits with no other structural change).</summary>
     int FormatChangeCount,
-    /// <summary>(Words inserted + words deleted) / words in the original document, as a percentage.</summary>
     double PercentChanged,
-    /// <summary>Text of every Heading-styled paragraph that a change falls under or immediately follows.</summary>
     IReadOnlyList<string> AffectedHeadings,
     IReadOnlyList<string> InsertedText,
     IReadOnlyList<string> DeletedText);

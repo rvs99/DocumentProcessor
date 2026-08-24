@@ -22,15 +22,20 @@ public enum MergeDirection { Horizontal, Vertical }
 /// </summary>
 public sealed record TableCellMerge(int RowIndex, int ColumnIndex, int Span, MergeDirection Direction);
 
+/// <summary>Describes a table to generate: its content plus optional layout and styling.</summary>
+/// <param name="Headers">Header-row cell text; the column count is taken from this.</param>
+/// <param name="Rows">Data rows, each with one entry per header column.</param>
+/// <param name="Caption">Optional bold caption paragraph inserted above the table.</param>
+/// <param name="ColumnWidthsTwips">Explicit column widths in twips. Must have one entry per header column when set; null means auto-width.</param>
+/// <param name="Borders">Border style for all six border positions. Null keeps the default single 0.5pt line with no explicit colour.</param>
+/// <param name="TableStyleId">References a table style already defined in the target document's styles part. Not validated — the caller is responsible for the style existing.</param>
+/// <param name="Merges">Cell merges to apply. Merges may not overlap.</param>
 public sealed record TableSpec(
     IReadOnlyList<string> Headers,
     IReadOnlyList<IReadOnlyList<string>> Rows,
     string? Caption = null,
-    /// <summary>Explicit column widths in twips. Must have one entry per header column when set; null means auto-width (the prior default behavior).</summary>
     IReadOnlyList<int>? ColumnWidthsTwips = null,
-    /// <summary>Border style for all six border positions. Null keeps the prior default (single 0.5pt line, no explicit color).</summary>
     TableBorderSpec? Borders = null,
-    /// <summary>References a table style already defined in the target document's styles part. Not validated — the caller is responsible for the style existing.</summary>
     string? TableStyleId = null,
     IReadOnlyList<TableCellMerge>? Merges = null);
 

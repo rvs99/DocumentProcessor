@@ -5,7 +5,7 @@ namespace DocumentProcessor.Core.Layout;
 
 /// <summary>
 /// A tenant's visual identity: a header logo plus the accent color applied to heading styles —
-/// beyond <see cref="Fonts.FontEmbeddingService"/>'s font-only customization, this is what most
+/// beyond <see cref="FontEmbedding.FontEmbeddingService"/>'s font-only customization, this is what most
 /// callers actually mean by "branding" a generated document.
 /// </summary>
 public sealed record TenantBrandingSpec(

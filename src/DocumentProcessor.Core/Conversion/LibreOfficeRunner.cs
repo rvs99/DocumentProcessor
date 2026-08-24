@@ -87,7 +87,7 @@ internal sealed record LibreOfficeSettings(string ExecutablePath, string? UseWsl
 /// Where the profile lives matters a great deal on the WSL path. LibreOffice populates a profile
 /// with hundreds of small files, and doing that across the <c>/mnt/c</c> 9p mount takes roughly a
 /// minute per conversion — measured, not assumed. So under WSL the profile stays on the distro's
-/// own filesystem, which means the host cannot delete it with <see cref="Directory.Delete"/> and
+/// own filesystem, which means the host cannot delete it with <see cref="Directory.Delete(string, bool)"/> and
 /// has to shell back in to remove it. That extra spawn costs milliseconds and buys back ~59 seconds.
 /// </para>
 /// </summary>

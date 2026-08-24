@@ -9,7 +9,7 @@ namespace DocumentProcessor.Core.Samples;
 /// Generates throwaway .docx fixtures used by the demo app and tests.
 /// Not part of the production surface — real callers bring their own documents.
 /// </summary>
-public static class SampleDocumentFactory
+internal static class SampleDocumentFactory
 {
     public static void CreateBasicDocument(string path, string title, IEnumerable<string> paragraphs)
     {

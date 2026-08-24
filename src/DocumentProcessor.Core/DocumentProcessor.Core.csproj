@@ -1,9 +1,65 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <!--
+      net10.0 only, and not by choice: Clippit ships lib/net10.0 exclusively (verified across
+      3.6.0 through 3.9.0), and it provides WmlComparer for redlining and DocumentBuilder for
+      clause assembly, both load-bearing. Multi-targeting net8.0 would mean dropping those
+      capabilities on that target, which is worse than requiring net10.0. Revisit if Clippit ever
+      broadens its target frameworks.
+    -->
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Without this the ~760 lines of XML doc comments in this library are compiled and thrown
+         away, so consumers get no IntelliSense on any public member. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!--
+      Suppressed: CS1591/CS1573 flag *absent* documentation on public members. Coverage is good on
+      everything with non-obvious behaviour and thin on self-describing members; filling the rest in
+      is tracked work, not a build blocker.
+
+      Deliberately NOT suppressed: CS1574, CS1734, CS0419 and CS1587, which flag documentation that
+      is *wrong* — a cref pointing at nothing, a paramref naming a parameter that does not exist, a
+      doc comment attached to the wrong element. Incorrect docs mislead in a way missing docs do
+      not, so those stay as warnings and are fixed at the source.
+    -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package">
+    <PackageId>DocumentProcessor.Core</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Rahul Sapkal</Authors>
+    <Description>
+      Programmatic Word/PDF document processing for .NET: template filling with conditional and
+      repeating sections, content controls, redlining and tracked changes, document assembly,
+      watermarking, metadata, and docx-to-PDF conversion. Built entirely on permissively licensed
+      dependencies.
+    </Description>
+    <PackageTags>docx;ooxml;pdf;word;templating;redline;contract;clm;document-generation</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/rvs99/DocumentProcessor</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/rvs99/DocumentProcessor.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <!-- Pre-1.0: the public surface is still moving, notably the session API. -->
+    <PackageValidationBaselineVersion Condition="'$(PackageValidationBaselineVersion)' != ''">$(PackageValidationBaselineVersion)</PackageValidationBaselineVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Debugging">
+    <!-- Symbols + SourceLink so a consumer can step into this code from their own debugger and
+         from a production stack trace, rather than guessing at a decompiled frame. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
   <ItemGroup>
@@ -11,7 +67,10 @@
     <PackageReference Include="Clippit" Version="3.8.0" />
     <PackageReference Include="DiffPlex" Version="1.9.0" />
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <!-- Lowest version that satisfies the graph (PDFsharp requires >= 8.0.3), per library
+         convention: pinning to 10.x would drag a consumer's whole Microsoft.Extensions.* graph
+         forward with it. Applications float this up themselves. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
     <PackageReference Include="PdfPig" Version="0.1.15" />
     <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="PDFtoImage" Version="5.3.0" />
@@ -29,7 +88,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Assets\Fonts\RobotoMono-Regular.ttf" LogicalName="DocumentProcessor.Core.Assets.Fonts.RobotoMono-Regular.ttf" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Test-only scaffolding (SampleDocumentFactory) is internal; the test project still needs it. -->
+    <InternalsVisibleTo Include="DocumentProcessor.Tests" />
+    <!-- The in-repo demo is a first-party sample, not a third-party consumer; it needs the same
+         fixture generator. Keeping it internal is about what ships in the public API surface. -->
+    <InternalsVisibleTo Include="DocumentProcessor.Demo" />
   </ItemGroup>
 
 </Project>

@@ -108,7 +108,7 @@ public sealed class ClauseTransplantService(ILogger<ClauseTransplantService>? lo
     }
 
     /// <summary>
-    /// Removes paragraphs [<paramref name="startIndex"/>, <paramref name="startIndex"/> +
+    /// Removes paragraphs [<paramref name="replacedStartIndex"/>, <paramref name="replacedStartIndex"/> +
     /// <paramref name="replacedCount"/>) from <paramref name="targetPath"/> and inserts paragraphs
     /// [<paramref name="sourceStartIndex"/>, <paramref name="sourceStartIndex"/> +
     /// <paramref name="sourceParagraphCount"/>) from <paramref name="sourcePath"/> in their place —

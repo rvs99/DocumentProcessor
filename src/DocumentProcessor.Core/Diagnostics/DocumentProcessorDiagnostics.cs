@@ -9,7 +9,7 @@ namespace DocumentProcessor.Core.Diagnostics;
 /// service's name up front. No NuGet package is needed for this: <see cref="ActivitySource"/>/
 /// <see cref="Activity"/> are part of the base class library (<c>System.Diagnostics</c>), and produce
 /// no overhead at all when nothing is listening (the OpenTelemetry SDK, Application Insights, or any
-/// other <see cref="System.Diagnostics.DiagnosticSource"/> listener — or none) — <see cref="StartActivity"/>
+/// other <see cref="System.Diagnostics.DiagnosticSource"/> listener — or none) — <c>StartActivity</c>
 /// short-circuits to a no-op when there's no listener, so services can call it unconditionally.
 /// </summary>
 public static class DocumentProcessorDiagnostics

@@ -220,7 +220,7 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
     /// <summary>
     /// Sets a Drop-Down List content control's selection to <paramref name="value"/>, validated
     /// against the control's own defined list items (<c>w:listItem/@w:value</c>) — unlike
-    /// <see cref="ReplaceByTag"/>'s best-effort handling, this throws if <paramref name="value"/>
+    /// <see cref="ReplaceByTag(string, string, string)"/>'s best-effort handling, this throws if <paramref name="value"/>
     /// isn't one of the control's valid options, since silently accepting an invalid selection would
     /// leave the control in a state Word's own dropdown UI could never produce.
     /// </summary>
