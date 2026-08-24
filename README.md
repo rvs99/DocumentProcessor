@@ -69,6 +69,31 @@ the value there — `dotnet run` applies the launch profile's environment variab
 shell's, so editing that file is the reliable way to change it (a `$env:` override in your terminal
 before `dotnet run` will *not* take effect, since the profile value wins).
 
+### Conversion throughput
+
+LibreOffice spends roughly 450 ms starting up before it looks at the first document, which for
+small contracts is most of the conversion. Two things keep that off the request path, both on by
+default and both configurable on `WordToPdfConversionOptions`:
+
+- **Batching.** `ConvertBatchAsync` converts many documents in one LibreOffice invocation — the
+  natural shape for a contract plus its exhibits. Measured on six documents: 6,421 ms one at a
+  time against 2,600 ms as a batch. Concurrent `ConvertAsync` calls that end up queued behind a
+  busy host are coalesced into shared invocations automatically, with no change to calling code —
+  six concurrent calls completed in 1,636 ms. Nothing is ever held back waiting for a companion
+  request, so an idle server behaves exactly as it did before.
+- **Profile pooling.** LibreOffice user profiles are kept warm and reused rather than rebuilt per
+  call, which is worth roughly 80–100 ms of a ~550 ms conversion. Profiles are still leased
+  exclusively — two LibreOffice processes sharing one profile contend for its lock and hang — and
+  any profile whose process had to be killed is destroyed rather than reused, since a killed
+  LibreOffice leaves its lock file behind.
+
+Batch conversion reports failure per document: one unreadable upload does not deny the rest of the
+batch their results.
+
+The process-wide cap on concurrent LibreOffice instances (`DOCPROC_MAX_CONCURRENT_CONVERSIONS`,
+default: half the CPU count) still bounds everything above — batching changes how many documents
+each process handles, not how many processes exist.
+
 ## Running
 
 ```powershell

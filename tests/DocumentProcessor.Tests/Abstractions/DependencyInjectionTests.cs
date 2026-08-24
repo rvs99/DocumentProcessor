@@ -94,6 +94,16 @@ public class DependencyInjectionTests
 
         public void Convert(string docxPath, string outputPdfPath) => Calls.Add((docxPath, outputPdfPath));
 
+        public Task<IReadOnlyList<ConversionResult>> ConvertBatchAsync(
+            IReadOnlyList<ConversionRequest> requests, CancellationToken cancellationToken = default)
+        {
+            foreach (var request in requests)
+                Calls.Add((request.DocxPath, request.OutputPdfPath));
+
+            return Task.FromResult<IReadOnlyList<ConversionResult>>(
+                [.. requests.Select(r => new ConversionResult(r, null))]);
+        }
+
         public Task ConvertAsync(string docxPath, string outputPdfPath, CancellationToken cancellationToken = default)
         {
             Calls.Add((docxPath, outputPdfPath));

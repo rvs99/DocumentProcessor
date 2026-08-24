@@ -58,6 +58,7 @@ namespace DocumentProcessor.Core.Conversion
     {
         void Convert(string docxPath, string outputPdfPath);
         Task ConvertAsync(string docxPath, string outputPdfPath, CancellationToken cancellationToken = default);
+        Task<IReadOnlyList<ConversionResult>> ConvertBatchAsync(IReadOnlyList<ConversionRequest> requests, CancellationToken cancellationToken = default);
     }
 }
 

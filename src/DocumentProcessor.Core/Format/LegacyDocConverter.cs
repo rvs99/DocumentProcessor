@@ -13,6 +13,14 @@ public sealed class LegacyDocConversionOptions
 
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(120);
 
+    /// <summary>Whether warm LibreOffice user profiles are pooled across conversions rather than
+    /// rebuilt per call. See <c>Conversion.WordToPdfConversionOptions.ReuseProfiles</c>.</summary>
+    public bool ReuseProfiles { get; set; } = true;
+
+    /// <summary>Whether queued conversions are coalesced into shared LibreOffice invocations.
+    /// See <c>Conversion.WordToPdfConversionOptions.EnableBatching</c>.</summary>
+    public bool EnableBatching { get; set; } = true;
+
     /// <summary>How long to wait for a free conversion slot before giving up. Shares the same
     /// process-wide cap as docx-to-PDF conversion, so a mixed .doc/.docx workload cannot spawn
     /// twice the intended number of LibreOffice processes.</summary>
@@ -43,11 +51,22 @@ public sealed class LegacyDocConverter : ILegacyDocConverter
         if (!File.Exists(docPath))
             throw new FileNotFoundException("Input .doc file not found.", docPath);
 
-        await Conversion.LibreOfficeRunner.ConvertAsync(
-            new Conversion.LibreOfficeSettings(_options.ExecutablePath, _options.UseWslDistro, _options.Timeout, _options.QueueTimeout),
-            docPath,
-            targetExtension: "docx",
-            finalOutputPath: outputDocxPath,
-            cancellationToken).ConfigureAwait(false);
+        var settings = new Conversion.LibreOfficeSettings(
+            _options.ExecutablePath, _options.UseWslDistro, _options.Timeout, _options.QueueTimeout,
+            ReuseProfiles: _options.ReuseProfiles, EnableBatching: _options.EnableBatching);
+
+        if (!settings.EnableBatching)
+        {
+            await Conversion.LibreOfficeRunner.ConvertAsync(
+                settings, docPath, targetExtension: "docx", finalOutputPath: outputDocxPath, cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        // Shares the conversion queue with docx→PDF work, but lands in its own lane: a single
+        // soffice invocation converts to exactly one target format.
+        await Conversion.ConversionQueue.EnqueueAsync(
+            settings, new Conversion.ConversionItem(docPath, outputDocxPath), "docx", cancellationToken)
+            .ConfigureAwait(false);
     }
 }

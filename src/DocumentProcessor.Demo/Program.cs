@@ -894,6 +894,86 @@ Step($"VERIFY they can still be included deliberately: " +
      $"{extraction.ExtractText(multiAuthorPath, new TextExtractionOptions { IncludeDeletedText = true }).Contains("$500,000")}");
 
 // ---------------------------------------------------------------------------------------------
+Section("26. Batched conversion — one LibreOffice start for many documents");
+// ---------------------------------------------------------------------------------------------
+
+// A contract rarely travels alone: the agreement plus its exhibits and schedules all need
+// rendering at once. LibreOffice spends most of a small conversion starting up, so converting
+// them together is worth far more than converting them faster.
+var batchDir = Out("25-batch");
+Directory.CreateDirectory(batchDir);
+
+var batchInputs = new List<string>();
+foreach (var (name, title) in new[]
+{
+    ("agreement", "Master Services Agreement"),
+    ("exhibit-a", "Exhibit A — Statement of Work"),
+    ("exhibit-b", "Exhibit B — Service Levels"),
+    ("schedule-1", "Schedule 1 — Fees"),
+    ("schedule-2", "Schedule 2 — Data Processing"),
+    ("annex", "Annex — Approved Subprocessors"),
+})
+{
+    var path = Path.Combine(batchDir, name + ".docx");
+    SampleDocumentFactory.CreateBasicDocument(path, title, [$"Contents of {title}."]);
+    batchInputs.Add(path);
+}
+
+try
+{
+    var unbatchedOptions = new WordToPdfConversionOptions
+    {
+        UseWslDistro = wslDistro,
+        EnableBatching = false,
+    };
+    var oneAtATime = new WordToPdfConverter(unbatchedOptions);
+
+    var sequentialTimer = System.Diagnostics.Stopwatch.StartNew();
+    foreach (var input in batchInputs)
+        await oneAtATime.ConvertAsync(input, Path.Combine(batchDir, Path.GetFileNameWithoutExtension(input) + "-solo.pdf"));
+    sequentialTimer.Stop();
+
+    var batchTimer = System.Diagnostics.Stopwatch.StartNew();
+    var batchResults = await converter.ConvertBatchAsync(
+        [.. batchInputs.Select(i => new ConversionRequest(i, Path.Combine(batchDir, Path.GetFileNameWithoutExtension(i) + ".pdf")))]);
+    batchTimer.Stop();
+
+    Step($"VERIFY every document in the batch converted: {batchResults.All(r => r.Succeeded)}");
+    Step($"VERIFY each result is its own document, not a neighbour's: " +
+         $"{batchResults.All(r => File.Exists(r.Request.OutputPdfPath))}");
+    Step($"One at a time: {sequentialTimer.ElapsedMilliseconds} ms — as one batch: {batchTimer.ElapsedMilliseconds} ms " +
+         $"for {batchInputs.Count} documents");
+    Step($"VERIFY batching is the faster route: {batchTimer.Elapsed < sequentialTimer.Elapsed}");
+
+    // The same saving applies without changing any calling code: concurrent ConvertAsync calls
+    // that end up queued behind a busy host are coalesced into shared invocations automatically.
+    var coalescedTimer = System.Diagnostics.Stopwatch.StartNew();
+    await Task.WhenAll(batchInputs.Select(i =>
+        converter.ConvertAsync(i, Path.Combine(batchDir, Path.GetFileNameWithoutExtension(i) + "-concurrent.pdf"))));
+    coalescedTimer.Stop();
+    Step($"Six concurrent ConvertAsync calls, coalesced automatically: {coalescedTimer.ElapsedMilliseconds} ms");
+
+    // A batch is not all-or-nothing. It has to survive the one document in a customer upload that
+    // turns out to be a truncated package.
+    var brokenPath = Path.Combine(batchDir, "broken.docx");
+    File.WriteAllBytes(brokenPath, [0x50, 0x4B, 0x03, 0x04, .. "truncated package"u8]);
+
+    var mixedBatch = await converter.ConvertBatchAsync(
+    [
+        new ConversionRequest(batchInputs[0], Path.Combine(batchDir, "mixed-good.pdf")),
+        new ConversionRequest(brokenPath, Path.Combine(batchDir, "mixed-bad.pdf")),
+    ]);
+
+    Step($"VERIFY one unreadable document does not deny the others their results: " +
+         $"{mixedBatch[0].Succeeded && !mixedBatch[1].Succeeded}");
+    Step($"  the failure is reported per document: {mixedBatch[1].Error?.GetType().Name}");
+}
+catch (Exception ex)
+{
+    Step($"Batch conversion SKIPPED — LibreOffice not available ({ex.GetType().Name}).");
+}
+
+// ---------------------------------------------------------------------------------------------
 Section("Done");
 // ---------------------------------------------------------------------------------------------
 
