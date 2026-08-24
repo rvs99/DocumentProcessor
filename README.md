@@ -32,8 +32,13 @@ independently — there's no shared "God object", just plain classes with a hand
 ```
 src/DocumentProcessor.Core/    Reusable library — all document-processing services
 src/DocumentProcessor.Demo/    Console app: runs a full contract lifecycle through every capability
-tests/DocumentProcessor.Tests/ 110 xUnit tests, several exercising the real LibreOffice conversion
+tests/DocumentProcessor.Tests/ 331 xUnit tests, several exercising the real LibreOffice conversion
+BACKLOG.md                     Deferred work, blocked items, known issues, and test baselines
 ```
+
+[`BACKLOG.md`](BACKLOG.md) is worth reading before picking anything up: it records what has already
+been measured or ruled out (and why), including the expected pass/fail counts for the test suite in
+each environment.
 
 ## Requirements
 
