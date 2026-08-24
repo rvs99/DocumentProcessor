@@ -69,7 +69,7 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
     public IReadOnlyList<TrackedChange> GetTrackedChanges(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
         var paragraphs = body.Elements<Paragraph>().ToList();
 
         var changes = new List<TrackedChange>();
@@ -95,7 +95,7 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
     {
         using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TrackChangesService.AcceptWhere");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+        var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
         var resolvedCount = 0;
 
         // Accepting an insertion keeps its content — unwrap the w:ins wrapper in place.
@@ -126,7 +126,7 @@ public sealed class TrackChangesService(ILogger<TrackChangesService>? logger = n
     {
         using var activity = DocumentProcessorDiagnostics.ActivitySource.StartActivity("TrackChangesService.RejectWhere");
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+        var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
         var resolvedCount = 0;
 
         // Rejecting an insertion undoes it — the inserted content goes away entirely.

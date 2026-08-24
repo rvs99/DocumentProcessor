@@ -77,7 +77,7 @@ internal static class SampleDocumentFactory
     public static void AddNumberingDefinition(string path, int numId, NumberFormatValues? format = null)
     {
         using var doc = WordprocessingDocument.Open(path, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
         var numberingPart = mainPart.NumberingDefinitionsPart ?? mainPart.AddNewPart<NumberingDefinitionsPart>();
         numberingPart.Numbering ??= new Numbering();
 
@@ -118,8 +118,8 @@ internal static class SampleDocumentFactory
     public static void AppendParagraphs(string path, IEnumerable<string> paragraphs)
     {
         using var doc = WordprocessingDocument.Open(path, isEditable: true);
-        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
         var sectPr = body.Elements<SectionProperties>().FirstOrDefault();
 
         foreach (var text in paragraphs)

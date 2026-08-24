@@ -190,8 +190,23 @@ internal static class LibreOfficeRunner
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
 
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Failed to start conversion process '{fileName}'.");
+        Process? started;
+        try
+        {
+            started = Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            // Almost always "LibreOffice isn't installed here" or a wrong ExecutablePath. That is a
+            // deployment fault, not a transient one: it will fail identically on every retry, so it
+            // gets its own non-retryable type rather than surfacing as a raw Win32Exception.
+            throw new ConversionUnavailableException(
+                $"Could not start the document converter '{fileName}'. Check that LibreOffice is installed and that " +
+                "ExecutablePath (or UseWslDistro) points at it.", ex);
+        }
+
+        using var process = started
+            ?? throw new ConversionUnavailableException($"Could not start the document converter '{fileName}'.");
 
         // Read both pipes concurrently with the wait below — draining them only after the process
         // exits would deadlock once a pipe buffer fills.

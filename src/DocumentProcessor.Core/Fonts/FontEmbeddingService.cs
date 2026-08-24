@@ -25,7 +25,7 @@ public sealed class FontEmbeddingService
     public void EmbedFontFamily(string docxPath, string fontFamilyName, FontFamilyFiles files)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
 
         var fontTablePart = mainPart.FontTablePart ?? mainPart.AddNewPart<FontTablePart>();
         fontTablePart.Fonts ??= new Fonts();
@@ -58,7 +58,7 @@ public sealed class FontEmbeddingService
     public void ApplyFontToAllRuns(string docxPath, string fontFamilyName)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+        var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
 
         foreach (var run in document.Descendants<Run>())
         {

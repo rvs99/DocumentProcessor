@@ -40,7 +40,7 @@ public sealed class BrandingService
     private static void ApplyHeadingColor(string docxPath, string colorHex, IReadOnlyList<string> headingStyleIds)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
         var stylesPart = mainPart.StyleDefinitionsPart ?? mainPart.AddNewPart<StyleDefinitionsPart>();
         stylesPart.Styles ??= new Styles();
 

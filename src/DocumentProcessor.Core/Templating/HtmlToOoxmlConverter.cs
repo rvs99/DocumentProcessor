@@ -12,7 +12,7 @@ namespace DocumentProcessor.Core.Templating;
 /// Distinct from a malformed-content error: the fragment may be perfectly well-formed, it is simply
 /// beyond the bounds this converter will walk without risking the host process.
 /// </summary>
-public sealed class HtmlTooComplexException(string message) : InvalidOperationException(message);
+public sealed class HtmlTooComplexException(string message) : DocumentTooComplexException(message);
 
 public sealed record HtmlConversionOptions
 {

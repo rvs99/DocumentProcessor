@@ -1,3 +1,4 @@
+using DocumentProcessor.Core;
 using DocumentProcessor.Core.Templating;
 
 namespace DocumentProcessor.Tests.Templating;
@@ -40,7 +41,9 @@ public class TemplateConditionTests
     [Fact]
     public void Parse_rejects_a_malformed_expression()
     {
-        Assert.Throws<FormatException>(() => TemplateCondition.Parse("not a condition"));
+        // TemplateException, not FormatException: a malformed condition is the template author's
+        // mistake, and a caller needs to tell that apart from an unrelated int.Parse failure.
+        Assert.Throws<TemplateException>(() => TemplateCondition.Parse("not a condition"));
     }
 
     [Fact]

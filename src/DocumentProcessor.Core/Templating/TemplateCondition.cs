@@ -20,7 +20,7 @@ public sealed partial record TemplateCondition(string FieldPath, ConditionOperat
         var match = Pattern().Match(expression);
         if (!match.Success)
         {
-            throw new FormatException(
+            throw new TemplateException(
                 $"Malformed condition '{expression}'. Expected 'field op value' with op in ==, !=, >=, <=, >, <.");
         }
 
@@ -32,7 +32,7 @@ public sealed partial record TemplateCondition(string FieldPath, ConditionOperat
             "<" => ConditionOperator.LessThan,
             ">=" => ConditionOperator.GreaterThanOrEqual,
             "<=" => ConditionOperator.LessThanOrEqual,
-            var unknown => throw new FormatException($"Unsupported operator '{unknown}'.")
+            var unknown => throw new TemplateException($"Unsupported operator '{unknown}'.")
         };
 
         var value = match.Groups["value"].Value.Trim();

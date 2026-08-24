@@ -25,7 +25,7 @@ public sealed class ClauseTransplantService(ILogger<ClauseTransplantService>? lo
     public IReadOnlyList<ParagraphInfo> ListParagraphs(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
 
         return body.Elements<Paragraph>()
             .Select((p, i) => new ParagraphInfo(i, p.InnerText))
@@ -181,7 +181,7 @@ public sealed class ClauseTransplantService(ILogger<ClauseTransplantService>? lo
     private static HashSet<string> GetBookmarkNamesInRange(string docxPath, int startIndex, int count)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
         var paragraphs = body.Elements<Paragraph>().ToList();
         var rangeEnd = Math.Min(startIndex + count, paragraphs.Count);
 
@@ -201,7 +201,7 @@ public sealed class ClauseTransplantService(ILogger<ClauseTransplantService>? lo
     private static IReadOnlyList<DanglingReference> GetReferencesOutsideRange(string docxPath, int startIndex, int count)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
         var paragraphs = body.Elements<Paragraph>().ToList();
         var rangeEnd = Math.Min(startIndex + count, paragraphs.Count);
 
@@ -229,7 +229,7 @@ public sealed class ClauseTransplantService(ILogger<ClauseTransplantService>? lo
     public void ContinueHeadingNumbering(string docxPath, int insertedStartIndex, int insertedCount)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
         var paragraphs = body.Elements<Paragraph>().ToList();
 
         var rangeEnd = Math.Min(insertedStartIndex + insertedCount, paragraphs.Count);

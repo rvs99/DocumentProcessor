@@ -26,7 +26,7 @@ public sealed class FieldUpdateService
     public void MarkAllFieldsDirty(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
 
         foreach (var simpleField in body.Descendants<SimpleField>())
             simpleField.Dirty = true;
@@ -44,7 +44,7 @@ public sealed class FieldUpdateService
     public void SetUpdateFieldsOnOpen(string docxPath, bool updateOnOpen = true)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
         var settingsPart = mainPart.DocumentSettingsPart ?? mainPart.AddNewPart<DocumentSettingsPart>();
         settingsPart.Settings ??= new Settings();
 

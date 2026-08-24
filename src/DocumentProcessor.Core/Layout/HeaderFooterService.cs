@@ -26,9 +26,9 @@ public sealed class HeaderFooterService
     {
         var resolvedType = type ?? HeaderFooterValues.Default;
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var headerPart = mainPart.AddNewPart<HeaderPart>();
         headerPart.Header = new Header(new Paragraph(new Run(new Text(text))));
@@ -51,9 +51,9 @@ public sealed class HeaderFooterService
     {
         var resolvedType = type ?? HeaderFooterValues.Default;
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var footerPart = mainPart.AddNewPart<FooterPart>();
         footerPart.Footer = new Footer(new Paragraph(new Run(new Text(text))));
@@ -88,9 +88,9 @@ public sealed class HeaderFooterService
     {
         var resolvedType = type ?? HeaderFooterValues.Default;
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var paragraph = new Paragraph();
         string relId;
@@ -223,9 +223,9 @@ public sealed class HeaderFooterService
     {
         var resolvedType = type ?? HeaderFooterValues.Default;
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var removedAny = false;
         foreach (var sectPr in body.Descendants<SectionProperties>())
@@ -247,9 +247,9 @@ public sealed class HeaderFooterService
     {
         var resolvedType = type ?? HeaderFooterValues.Default;
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var removedAny = false;
         foreach (var sectPr in body.Descendants<SectionProperties>())

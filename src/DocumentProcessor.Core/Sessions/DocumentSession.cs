@@ -2,6 +2,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentProcessor.Core.ContentControls;
 using DocumentProcessor.Core.Diagnostics;
 using DocumentProcessor.Core.Metadata;
+using DocumentProcessor.Core.Security;
 using DocumentProcessor.Core.Tables;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -50,11 +51,22 @@ public sealed class DocumentSession : IDisposable
         Tables = new TableOperations(this);
     }
 
-    /// <summary>Opens a document held in memory — a web upload, a blob-store read — with no
-    /// filesystem involvement at any point.</summary>
-    public static DocumentSession Open(byte[] docxBytes, ILoggerFactory? loggerFactory = null)
+    /// <summary>
+    /// Opens a document held in memory — a web upload, a blob-store read — with no filesystem
+    /// involvement at any point.
+    /// <para>
+    /// The package is checked against <paramref name="limits"/> before it is parsed. This is the
+    /// entry point untrusted tenant uploads come through, so the bound is applied by default rather
+    /// than being something a caller has to remember; pass <see cref="DocumentLimits.Unbounded"/>
+    /// for documents this system produced itself.
+    /// </para>
+    /// </summary>
+    /// <exception cref="DocumentTooComplexException">The package exceeds <paramref name="limits"/>.</exception>
+    /// <exception cref="CorruptDocumentException">The bytes are not a readable Office package.</exception>
+    public static DocumentSession Open(byte[] docxBytes, ILoggerFactory? loggerFactory = null, DocumentLimits? limits = null)
     {
         ArgumentNullException.ThrowIfNull(docxBytes);
+        DocumentPackageGuard.Validate(docxBytes, limits);
 
         // Capacity is pre-sized: the package grows as parts are edited, and letting a
         // zero-capacity MemoryStream double its way up from nothing churns the large object heap
@@ -68,12 +80,16 @@ public sealed class DocumentSession : IDisposable
 
     /// <summary>Copies <paramref name="docxStream"/> into memory and opens it. The source stream is
     /// not retained, and is left at whatever position reading finished.</summary>
-    public static DocumentSession Open(Stream docxStream, ILoggerFactory? loggerFactory = null)
+    public static DocumentSession Open(Stream docxStream, ILoggerFactory? loggerFactory = null, DocumentLimits? limits = null)
     {
         ArgumentNullException.ThrowIfNull(docxStream);
 
         var stream = new MemoryStream();
         docxStream.CopyTo(stream);
+
+        // Validated from the buffered copy rather than the caller's stream, which may not be
+        // seekable and must not be consumed twice.
+        DocumentPackageGuard.Validate(stream.ToArray(), limits);
         stream.Position = 0;
 
         return OpenStreamOwned(stream, loggerFactory);
@@ -81,13 +97,16 @@ public sealed class DocumentSession : IDisposable
 
     /// <summary>Reads a document from disk into memory and opens it. The file is closed
     /// immediately — nothing holds a handle for the life of the session.</summary>
-    public static DocumentSession OpenFile(string docxPath, ILoggerFactory? loggerFactory = null)
+    public static DocumentSession OpenFile(string docxPath, ILoggerFactory? loggerFactory = null, DocumentLimits? limits = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(docxPath);
         if (!File.Exists(docxPath))
             throw new FileNotFoundException("Input .docx file not found.", docxPath);
 
-        return Open(File.ReadAllBytes(docxPath), loggerFactory);
+        // Checked against the file's own length before reading it in, so an oversized file is
+        // rejected without being loaded into memory first.
+        DocumentPackageGuard.ValidateFile(docxPath, limits);
+        return Open(File.ReadAllBytes(docxPath), loggerFactory, DocumentLimits.Unbounded);
     }
 
     private static DocumentSession OpenStreamOwned(MemoryStream stream, ILoggerFactory? loggerFactory)

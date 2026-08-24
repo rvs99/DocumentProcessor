@@ -21,7 +21,7 @@ public sealed class CrossReferenceValidator
     public IReadOnlyList<DanglingReference> Validate(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
 
         var bookmarkNames = new HashSet<string>(
             body.Descendants<BookmarkStart>().Select(b => b.Name?.Value).Where(n => n is not null)!);

@@ -54,8 +54,8 @@ public sealed class TableGenerationService
 
     internal void AppendTableCore(WordprocessingDocument doc, TableSpec spec)
     {
-        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
         var sectPr = body.Elements<SectionProperties>().FirstOrDefault();
 
         if (spec.Caption is not null)
@@ -78,8 +78,8 @@ public sealed class TableGenerationService
 
     internal void ReplaceTableCore(WordprocessingDocument doc, int tableIndex, TableSpec spec)
     {
-        var document = doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var document = doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var existing = body.Elements<Table>().ElementAtOrDefault(tableIndex)
             ?? throw new ArgumentOutOfRangeException(nameof(tableIndex), $"Document has no table at index {tableIndex}.");
@@ -115,9 +115,9 @@ public sealed class TableGenerationService
         MissingTokenPolicy missingTokenPolicy,
         CancellationToken cancellationToken)
     {
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var table = body.Elements<Table>().ElementAtOrDefault(tableIndex)
             ?? throw new ArgumentOutOfRangeException(nameof(tableIndex), $"Document has no table at index {tableIndex}.");

@@ -295,7 +295,7 @@ public sealed class ContentControlService(ILogger<ContentControlService>? logger
         document.Descendants<SdtElement>().Where(sdt => sdt.SdtProperties?.GetFirstChild<Tag>()?.Val?.Value == tag);
 
     private static Document RequireDocument(WordprocessingDocument doc) =>
-        doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+        doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
 
     private static ContentControlLockMode? ReadLockMode(SdtElement sdt)
     {

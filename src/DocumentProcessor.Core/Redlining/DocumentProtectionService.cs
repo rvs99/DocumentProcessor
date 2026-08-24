@@ -40,7 +40,7 @@ public sealed class DocumentProtectionService
     public void SetDocumentProtection(string docxPath, EditRestriction restriction, string? password = null)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
         var settingsPart = mainPart.DocumentSettingsPart ?? mainPart.AddNewPart<DocumentSettingsPart>();
         settingsPart.Settings ??= new Settings();
 
@@ -95,7 +95,7 @@ public sealed class DocumentProtectionService
             throw new ArgumentOutOfRangeException(nameof(endParagraphIndex), "End index must be >= start index.");
 
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
         var paragraphs = body.Elements<Paragraph>().ToList();
 
         if (endParagraphIndex >= paragraphs.Count)

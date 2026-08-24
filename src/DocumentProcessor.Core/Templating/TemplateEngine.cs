@@ -66,15 +66,15 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
 
         using (var doc = WordprocessingDocument.Open(outputPath, isEditable: true))
         {
-            var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-            var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-            var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+            var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+            var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+            var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
             var paragraphs = body.Elements<Paragraph>().ToList();
             var index = 0;
             var nodes = ParseSequence(paragraphs, ref index);
             if (index != paragraphs.Count)
-                throw new FormatException("Unbalanced {{if}}/{{repeat}} markers in template.");
+                throw new TemplateException("Unbalanced {{if}}/{{repeat}} markers in template.");
 
             ExpandNodes(nodes, new TemplateContext(data), mainPart, missingTokenPolicy, cancellationToken);
 
@@ -155,7 +155,7 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
                 }
 
                 if (index >= paragraphs.Count || !EndIfPattern.IsMatch(paragraphs[index].InnerText.Trim()))
-                    throw new FormatException($"Missing {{{{/if}}}} for {{{{if:{ifMatch.Groups[1].Value}}}}}.");
+                    throw new TemplateException($"Missing {{{{/if}}}} for {{{{if:{ifMatch.Groups[1].Value}}}}}.");
                 var endMarker = paragraphs[index];
                 index++;
 
@@ -172,7 +172,7 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
                 var bodyNodes = ParseSequence(paragraphs, ref index, stopAtElseOrEnd: true);
 
                 if (index >= paragraphs.Count || !EndRepeatPattern.IsMatch(paragraphs[index].InnerText.Trim()))
-                    throw new FormatException($"Missing {{{{/repeat}}}} for {{{{repeat:{repeatMatch.Groups[1].Value}}}}}.");
+                    throw new TemplateException($"Missing {{{{/repeat}}}} for {{{{repeat:{repeatMatch.Groups[1].Value}}}}}.");
                 var endMarker = paragraphs[index];
                 index++;
 
@@ -471,7 +471,7 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
                 switch (policy)
                 {
                     case MissingTokenPolicy.Error:
-                        throw new InvalidOperationException($"Clause library has no clause with id '{clauseId}'.");
+                        throw new TemplateException($"Clause library has no clause with id '{clauseId}'.");
 
                     case MissingTokenPolicy.Redact:
                         // Drop the marker paragraph by simply not emitting it.
@@ -512,7 +512,7 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
     private static List<(int Index, string ClauseId)> FindClauseMarkers(string docxPath, out int totalParagraphs)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: false);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no main part/body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no main part/body.");
 
         var markers = new List<(int, string)>();
         var index = 0;
@@ -546,8 +546,8 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
         var context = new TemplateContext(data);
 
         using var doc = WordprocessingDocument.Open(outputPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var body = mainPart.Document?.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var body = mainPart.Document?.Body ?? throw new CorruptDocumentException("Document has no body.");
         var paragraphs = body.Elements<Paragraph>().ToList();
 
         foreach (var (startIndex, count) in insertedClauses)
@@ -609,7 +609,7 @@ public sealed class TemplateEngine(ILogger<TemplateEngine>? logger = null)
     private static void ReplaceParagraphTextHighlighted(string docxPath, int paragraphIndex, string text)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var body = doc.MainDocumentPart?.Document?.Body ?? throw new InvalidOperationException("Document has no body.");
+        var body = doc.MainDocumentPart?.Document?.Body ?? throw new CorruptDocumentException("Document has no body.");
         var paragraph = body.Elements<Paragraph>().ElementAt(paragraphIndex);
         paragraph.RemoveAllChildren<Run>();
         var run = new Run(new Text(text) { Space = SpaceProcessingModeValues.Preserve });

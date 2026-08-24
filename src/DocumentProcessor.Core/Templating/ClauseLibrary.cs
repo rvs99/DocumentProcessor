@@ -18,7 +18,7 @@ public sealed record ClauseLibrary(string DocxPath)
     {
         using var doc = WordprocessingDocument.Open(DocxPath, isEditable: false);
         var body = doc.MainDocumentPart?.Document?.Body
-            ?? throw new InvalidOperationException("Clause library document has no body.");
+            ?? throw new CorruptDocumentException("Clause library document has no body.");
 
         var bookmarkName = $"clause_{clauseId}";
         var start = body.Descendants<BookmarkStart>().FirstOrDefault(b => b.Name?.Value == bookmarkName);
@@ -48,7 +48,7 @@ public sealed record ClauseLibrary(string DocxPath)
     {
         using var doc = WordprocessingDocument.Open(DocxPath, isEditable: false);
         var body = doc.MainDocumentPart?.Document?.Body
-            ?? throw new InvalidOperationException("Clause library document has no body.");
+            ?? throw new CorruptDocumentException("Clause library document has no body.");
 
         const string prefix = "clause_";
         return body.Descendants<BookmarkStart>()

@@ -71,9 +71,9 @@ public sealed class DocxWatermarkService
         double fontSizePt = 72)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var shapeId = removable ? $"{RemovableShapeIdPrefix}{Random.Shared.Next(10_000_000, 99_999_999)}" : LockedShapeId;
 
@@ -162,7 +162,7 @@ public sealed class DocxWatermarkService
     public bool RemoveWatermark(string docxPath)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
 
         var removedAny = false;
         foreach (var headerPart in mainPart.HeaderParts)

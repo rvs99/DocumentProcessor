@@ -23,9 +23,9 @@ public sealed class ESignFieldService
     public void InjectDocxAnchor(string docxPath, string anchorText, string tag = "ESignatureField")
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
-        var document = mainPart.Document ?? throw new InvalidOperationException("Document has no body.");
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
+        var document = mainPart.Document ?? throw new CorruptDocumentException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var sdt = new SdtRun(
             new SdtProperties(new Tag { Val = tag }, new SdtAlias { Val = tag }),

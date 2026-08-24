@@ -19,7 +19,7 @@ public enum MissingTokenPolicy
 
 /// <summary>Thrown by <see cref="MissingTokenPolicy.Error"/> when a token's field path has no value.</summary>
 public sealed class MissingTemplateTokenException(string fieldPath)
-    : InvalidOperationException($"Template token references unresolved field path '{fieldPath}'.")
+    : TemplateException($"Template token references unresolved field path '{fieldPath}'.")
 {
     public string FieldPath { get; } = fieldPath;
 }

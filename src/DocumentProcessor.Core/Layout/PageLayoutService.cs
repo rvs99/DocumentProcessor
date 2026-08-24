@@ -126,7 +126,7 @@ public sealed class PageLayoutService
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         var document = GetDocument(doc);
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var paragraphs = body.Elements<Paragraph>().ToList();
         if (beforeParagraphIndex < 0 || beforeParagraphIndex > paragraphs.Count)
@@ -166,7 +166,7 @@ public sealed class PageLayoutService
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
         var document = GetDocument(doc);
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
 
         var paragraphs = body.Elements<Paragraph>().ToList();
         if (beforeParagraphIndex < 0 || beforeParagraphIndex > paragraphs.Count)
@@ -212,7 +212,7 @@ public sealed class PageLayoutService
     public void SetDefaultParagraphSpacing(string docxPath, int afterTwips, int lineTwips, LineSpacingRuleValues lineRule)
     {
         using var doc = WordprocessingDocument.Open(docxPath, isEditable: true);
-        var mainPart = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+        var mainPart = doc.MainDocumentPart ?? throw new CorruptDocumentException("Document has no main part.");
 
         var stylesPart = mainPart.StyleDefinitionsPart ?? mainPart.AddNewPart<StyleDefinitionsPart>();
         stylesPart.Styles ??= new Styles();
@@ -247,11 +247,11 @@ public sealed class PageLayoutService
     }
 
     private static Document GetDocument(WordprocessingDocument doc) =>
-        doc.MainDocumentPart?.Document ?? throw new InvalidOperationException("Document has no main part/body.");
+        doc.MainDocumentPart?.Document ?? throw new CorruptDocumentException("Document has no main part/body.");
 
     private static IReadOnlyList<SectionProperties> ResolveSections(Document document, int? sectionIndex)
     {
-        var body = document.Body ?? throw new InvalidOperationException("Document has no body.");
+        var body = document.Body ?? throw new CorruptDocumentException("Document has no body.");
         var allSections = body.Descendants<SectionProperties>().ToList();
 
         if (allSections.Count == 0)
