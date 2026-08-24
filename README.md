@@ -5,27 +5,74 @@ free, permissively-licensed libraries — no paid or revenue-gated dependencies 
 
 ## Capabilities
 
+### Templating & document assembly
+
 | Capability | Implementation |
 |---|---|
-| Content control replacement in .docx | `ContentControls/ContentControlService.cs` |
-| Programmatic table generation/population | `Tables/TableGenerationService.cs` |
+| `{{token}}` mail-merge filling — run-merged scanning, so a token split across Word's own runs still matches | `Templating/TemplateEngine.cs`, `Templating/RunTextScanner.cs` |
+| Missing-token policy: `Error` / `Redact` / `Highlight` (wraps the literal token, marked for review) | `Templating/MissingTokenPolicy.cs` |
+| `{{html:token}}` rich-text injection, sanitized against an allow-list before conversion to OOXML | `Templating/HtmlToOoxmlConverter.cs` |
+| `{{if:...}}` / `{{else}}` / `{{/if}}` conditional sections | `Templating/TemplateCondition.cs`, `TemplateEngine.cs` |
+| `{{repeat:collection}}` / `{{/repeat}}` repeating sections, driven by a list of row dictionaries | `Templating/TemplateEngine.cs` |
+| `{{clause:id}}` marker-based clause-library injection, with heading-numbering continuation | `Templating/ClauseLibrary.cs`, `TemplateEngine.cs` |
+| Content control (SDT) replacement, type-aware (plain/rich-text/date/drop-down), by tag or in bulk | `ContentControls/ContentControlService.cs` |
+| Content control locking after fill (`SetLock`, `ContentControlLockMode`) | `ContentControls/ContentControlService.cs` |
+| Clause/paragraph transplant, removal, and replacement between docx files | `Transplant/ClauseTransplantService.cs` |
+| Clause removal with cross-reference cleanup (dangling `REF`/`PAGEREF` reporting) | `Transplant/ClauseTransplantService.cs`, `DocumentAssembly/CrossReferenceValidator.cs` |
+| Field dirtying / update-on-open, so Word recomputes TOC and cross-reference display text | `DocumentAssembly/FieldUpdateService.cs` |
+| Programmatic table generation/population — column widths, borders, named styles, merged cells | `Tables/TableGenerationService.cs` |
+| PDF assembly: merge, page-range extraction, exhibit append with continued page numbering | `DocumentAssembly/PdfAssemblyService.cs` |
+
+### Conversion, redlining & review
+
+| Capability | Implementation |
+|---|---|
+| docx → PDF conversion, batched and profile-pooled | `Conversion/WordToPdfConverter.cs` (LibreOffice headless) |
+| Legacy `.doc` (binary OLE) → docx conversion, ahead of the normal OpenXml pipeline | `Format/LegacyDocConverter.cs` |
+| Redlining / docx-vs-docx comparison with reviewer identity (Clippit `WmlComparer`) | `Redlining/DocumentComparisonService.cs` |
+| Four-variant redline export: clean/redlined × docx/PDF, in one call | `Redlining/RedlineExportService.cs` |
+| PDF-vs-PDF comparison (text + visual) | `Comparison/PdfComparisonService.cs` |
+| Structured track-changes list (author/date/id/kind) and accept/reject by author or change id | `TrackChanges/TrackChangesService.cs` |
+| Section-level edit restriction (comments-only / tracked-changes-only / forms-only), password-backed, with per-range exceptions | `Redlining/DocumentProtectionService.cs` |
+| Word comments — read, add, reply, resolve, delete, with threading (`commentsEx`) | `Comments/DocumentCommentService.cs` |
+| Plain-text and clause-level text extraction, tracked-deletion-aware | `Extraction/TextExtractionService.cs` |
+
+### Branding, layout & watermarking
+
+| Capability | Implementation |
+|---|---|
+| Page size, orientation, margins, columns, page breaks, default spacing, multi-section documents | `Layout/PageLayoutService.cs` |
+| Headers/footers (default, first-page, even-page) | `Layout/HeaderFooterService.cs` |
+| Tenant branding — header logo plus a document-wide accent color across headings | `Layout/BrandingService.cs` |
+| Watermarking, docx and PDF, with position/size control | `Watermarking/DocxWatermarkService.cs`, `Watermarking/PdfWatermarkService.cs` |
+| Status → watermark policy mapping (e.g. Draft/Final/Confidential → a configured watermark) | `Watermarking/StatusWatermarkPolicy.cs` |
 | Custom/embedded font support (docx) | `Fonts/FontEmbeddingService.cs` |
 | Custom/embedded font support (PDF) | `PdfFonts/PdfFontResolver.cs` |
-| docx → PDF conversion | `Conversion/WordToPdfConverter.cs` (LibreOffice headless) |
-| Redlining / docx-vs-docx comparison | `Redlining/DocumentComparisonService.cs` |
-| PDF-vs-PDF comparison (text + visual) | `Comparison/PdfComparisonService.cs` |
-| Clause/paragraph transplant between docx files | `Transplant/ClauseTransplantService.cs` |
-| Watermarking (docx) | `Watermarking/DocxWatermarkService.cs` |
-| Watermarking (PDF) | `Watermarking/PdfWatermarkService.cs` |
 | E-sign field injection (docx + PDF) | `ESign/ESignFieldService.cs` |
-| Track changes accept/reject | `TrackChanges/TrackChangesService.cs` |
-| Word comments — read, add, reply, resolve, delete | `Comments/DocumentCommentService.cs` |
-| Plain-text and clause-level text extraction | `Extraction/TextExtractionService.cs` |
-| Page size, orientation, margins, columns, page breaks, default spacing | `Layout/PageLayoutService.cs` |
-| Headers/footers (default, first-page, even-page) | `Layout/HeaderFooterService.cs` |
+
+### Metadata, security & audit
+
+| Capability | Implementation |
+|---|---|
+| Custom docx properties (string/bool/int/double/date) and standard core properties | `Metadata/DocumentMetadataService.cs` |
+| XMP metadata embedding in PDF | `Metadata/PdfMetadataService.cs` |
+| Macro/VBA detection, stripping, and macro-enabled template validation | `Security/MacroValidationService.cs` |
+| PDF password protection (owner/user passwords, permission flags) | `Security/PdfProtectionService.cs` |
+| Zip-bomb / decompression-ratio defence on every document opened, reading only the ZIP central directory | `Security/DocumentLimits.cs` |
+| `ActivitySource` telemetry and `ILogger<T>` operation logging, opt-in and zero-overhead when unobserved | `Diagnostics/DocumentProcessorDiagnostics.cs` |
+
+### API surface
+
+| Capability | Implementation |
+|---|---|
+| Session/handle pattern: one open package, many operations, one save — byte[]-in/byte[]-out, no intermediate files | `Sessions/DocumentSession.cs`, `Sessions/SessionOperations.cs` |
+| Dependency-injection registration for every service, `TryAdd` semantics throughout | `Abstractions/ServiceCollectionExtensions.cs` |
+| A typed exception hierarchy (`DocumentProcessorException`) distinguishing retryable failures from deployment/input faults | `DocumentProcessorException.cs` |
 
 All services live under `src/DocumentProcessor.Core`, one folder per capability, and are usable
 independently — there's no shared "God object", just plain classes with a handful of public methods.
+`DocumentSession` is the recommended entry point for any multi-step pipeline; the path-based service
+classes above remain available directly for single-operation use.
 
 ## Project layout
 
@@ -99,6 +146,65 @@ The process-wide cap on concurrent LibreOffice instances (`DOCPROC_MAX_CONCURREN
 default: half the CPU count) still bounds everything above — batching changes how many documents
 each process handles, not how many processes exist.
 
+## Usage
+
+### One document, several operations: `DocumentSession`
+
+Every path-based service (`ContentControlService`, `TableGenerationService`, and so on) opens the
+package, does one thing, and saves — fine standalone, wasteful chained. A five-step pipeline through
+five services means five open/parse/rezip cycles. `DocumentSession` opens once, exposes the same
+operations as properties, and saves once:
+
+```csharp
+using var session = DocumentSession.Open(uploadedBytes); // byte[]-in, no temp file required
+
+session.ContentControls.ReplaceMany(new Dictionary<string, string>
+{
+    ["ClientName"] = "Acme Corporation",
+    ["EffectiveDate"] = "2027-01-01",
+});
+session.Tables.AppendTable(pricingSpec);
+session.Watermark.AddText("DRAFT");
+session.Metadata.SetCustomProperties(new Dictionary<string, object?> { ["MatterNumber"] = "M-2027-0042" });
+session.Protection.Restrict(EditRestriction.TrackedChanges, password: "…");
+
+byte[] result = session.Save(); // byte[]-out
+```
+
+`DocumentSession.Open` validates the incoming package against `DocumentLimits.Default` (size,
+entry count, and decompression-ratio limits) before anything else touches it — pass a different
+`DocumentLimits` (or `.Unbounded`) for documents from a trusted source. Available operation groups:
+`ContentControls`, `Metadata`, `Tables`, `TrackChanges`, `PageLayout`, `Watermark`, `Protection`,
+`Fonts`, `Fields`, `Comments`, `Text`.
+
+### Dependency injection
+
+```csharp
+services.AddDocumentProcessor(options => options.ExecutablePath = "/usr/bin/soffice");
+```
+
+Registers every service in the table above against its interface, as singletons (`TryAdd`
+semantics, so an application's own registration of any interface takes precedence). Services hold
+no per-call mutable state — per-document state lives entirely in `DocumentSession`, which callers
+create and dispose per operation, not in DI.
+
+### Error handling
+
+Every exception this library throws derives from `DocumentProcessorException`, with
+`IsRetryable` distinguishing failures worth an automatic retry from ones that will fail identically
+every time:
+
+```
+DocumentProcessorException          IsRetryable => false by default
+├── CorruptDocumentException        malformed or unreadable package
+├── DocumentTooComplexException     structural limits (nesting, size) exceeded
+│   └── HtmlTooComplexException     rich-text input specifically
+├── TemplateException               template fill failed
+│   └── MissingTemplateTokenException   MissingTokenPolicy.Error, token has no value
+├── ConversionUnavailableException  LibreOffice missing/misconfigured — IsRetryable false
+└── ConversionFailedException       the conversion itself failed — IsRetryable true
+```
+
 ## Running
 
 ```powershell
@@ -113,8 +219,9 @@ dotnet test
 dotnet run --project src/DocumentProcessor.Demo
 ```
 
-Without LibreOffice available, the docx-only capabilities (steps 1–10 of the demo) still run fine;
-PDF-dependent steps are skipped with a clear message rather than failing the whole run.
+All 26 sections of the demo run without LibreOffice available — the docx-only capabilities in each
+section run fine, and individual PDF-dependent steps within a section report a clear "SKIPPED"
+message rather than failing the whole run.
 
 ## Conversion fidelity: what works and what doesn't
 
