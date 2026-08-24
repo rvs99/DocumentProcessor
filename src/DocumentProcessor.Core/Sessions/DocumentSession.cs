@@ -55,6 +55,8 @@ public sealed class DocumentSession : IDisposable
         Protection = new DocumentProtectionOperations(this);
         Fonts = new FontOperations(this);
         Fields = new FieldOperations(this);
+        Comments = new CommentOperations(this);
+        Text = new TextOperations(this);
     }
 
     /// <summary>
@@ -168,6 +170,12 @@ public sealed class DocumentSession : IDisposable
 
     /// <summary>Field dirtying, update-on-open, and cross-reference validation.</summary>
     public FieldOperations Fields { get; }
+
+    /// <summary>Reviewer comments: reading the thread, replying, resolving, deleting.</summary>
+    public CommentOperations Comments { get; }
+
+    /// <summary>Document text as data, for search indexing and clause-level review.</summary>
+    public TextOperations Text { get; }
 
     /// <summary>Flushes every pending change into the package and returns it as bytes. The session
     /// stays usable afterwards, so this can be called more than once (e.g. to snapshot an

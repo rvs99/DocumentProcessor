@@ -1,4 +1,6 @@
+using DocumentProcessor.Core.Comments;
 using DocumentProcessor.Core.Comparison;
+using DocumentProcessor.Core.Extraction;
 using DocumentProcessor.Core.ContentControls;
 using DocumentProcessor.Core.Conversion;
 using DocumentProcessor.Core.DocumentAssembly;
@@ -96,6 +98,10 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IPdfProtectionService, PdfProtectionService>();
         services.TryAddSingleton<IPdfComparisonService, PdfComparisonService>();
         services.TryAddSingleton<IESignFieldService, ESignFieldService>();
+
+        // Contract-lifecycle specifics: the reviewer conversation, and document text as data.
+        services.TryAddSingleton<IDocumentCommentService, DocumentCommentService>();
+        services.TryAddSingleton<ITextExtractionService, TextExtractionService>();
 
         return services;
     }

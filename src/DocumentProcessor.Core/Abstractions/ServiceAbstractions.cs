@@ -10,7 +10,9 @@
 // stay in step, since each service declares it implements its own interface.
 
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.Comments;
 using DocumentProcessor.Core.Comparison;
+using DocumentProcessor.Core.Extraction;
 using DocumentProcessor.Core.ContentControls;
 using DocumentProcessor.Core.Conversion;
 using DocumentProcessor.Core.DocumentAssembly;
@@ -250,5 +252,26 @@ namespace DocumentProcessor.Core.Watermarking
     public interface IPdfWatermarkService
     {
         void AddTextWatermark(string pdfPath, string outputPath, string text, string fontFamily = "Arial", double rotationDegrees = -45, byte grayLevel = 192, byte alpha = 100, WatermarkPosition position = WatermarkPosition.Center, double fontSizePt = 72);
+    }
+}
+
+namespace DocumentProcessor.Core.Comments
+{
+    public interface IDocumentCommentService
+    {
+        IReadOnlyList<DocumentComment> GetComments(string docxPath);
+        string AddComment(string docxPath, int paragraphIndex, string author, string initials, string text);
+        string ReplyToComment(string docxPath, string parentCommentId, string author, string initials, string text);
+        void ResolveComment(string docxPath, string commentId, bool resolved = true);
+        bool DeleteComment(string docxPath, string commentId);
+    }
+}
+
+namespace DocumentProcessor.Core.Extraction
+{
+    public interface ITextExtractionService
+    {
+        string ExtractText(string docxPath, TextExtractionOptions? options = null);
+        IReadOnlyList<TextBlock> ExtractBlocks(string docxPath, TextExtractionOptions? options = null);
     }
 }

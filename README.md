@@ -19,6 +19,8 @@ free, permissively-licensed libraries — no paid or revenue-gated dependencies 
 | Watermarking (PDF) | `Watermarking/PdfWatermarkService.cs` |
 | E-sign field injection (docx + PDF) | `ESign/ESignFieldService.cs` |
 | Track changes accept/reject | `TrackChanges/TrackChangesService.cs` |
+| Word comments — read, add, reply, resolve, delete | `Comments/DocumentCommentService.cs` |
+| Plain-text and clause-level text extraction | `Extraction/TextExtractionService.cs` |
 | Page size, orientation, margins, columns, page breaks, default spacing | `Layout/PageLayoutService.cs` |
 | Headers/footers (default, first-page, even-page) | `Layout/HeaderFooterService.cs` |
 

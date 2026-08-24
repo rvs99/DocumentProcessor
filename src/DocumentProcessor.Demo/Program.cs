@@ -3,12 +3,14 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using PageSize = DocumentProcessor.Core.Layout.PageSize;
+using DocumentProcessor.Core.Comments;
 using DocumentProcessor.Core.Comparison;
 using DocumentProcessor.Core.Conversion;
 using DocumentProcessor.Core.ContentControls;
 using DocumentProcessor.Core.Diagnostics;
 using DocumentProcessor.Core.DocumentAssembly;
 using DocumentProcessor.Core.ESign;
+using DocumentProcessor.Core.Extraction;
 using DocumentProcessor.Core.FontEmbedding;
 using DocumentProcessor.Core.Format;
 using DocumentProcessor.Core.Layout;
@@ -16,6 +18,7 @@ using DocumentProcessor.Core.Metadata;
 using DocumentProcessor.Core.Redlining;
 using DocumentProcessor.Core.Samples;
 using DocumentProcessor.Core.Security;
+using DocumentProcessor.Core.Sessions;
 using DocumentProcessor.Core.Tables;
 using DocumentProcessor.Core.Templating;
 using DocumentProcessor.Core.TrackChanges;
@@ -835,6 +838,60 @@ File.Delete(loggingOutputPath);
 
 Step($"VERIFY the ActivitySource emitted a span for this Fill call: {loggedActivities.Contains("TemplateEngine.Fill")}");
 Step($"VERIFY the ILogger received at least one log entry: {demoLogger.EntryCount > 0}");
+
+// ---------------------------------------------------------------------------------------------
+Section("25. Reviewer comments and text extraction — the CLM round-trip");
+// ---------------------------------------------------------------------------------------------
+
+var reviewPath = Out("24-commented-contract.docx");
+SampleDocumentFactory.CreateDocumentFromParagraphs(reviewPath,
+[
+    new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "Heading1" }), new Run(new Text("5. Limitation of Liability"))),
+    new Paragraph(new Run(new Text("Each party's aggregate liability is capped at the fees paid in the preceding twelve months."))),
+    new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "Heading2" }), new Run(new Text("5.1 Exclusions"))),
+    new Paragraph(new Run(new Text("The cap does not apply to gross negligence or wilful misconduct."))),
+]);
+
+// One session carries the whole review exchange: comment, reply, resolve — and then reads the
+// text back out for indexing, without a single intermediate save.
+byte[] reviewedBytes;
+string threadId;
+using (var reviewSession = DocumentSession.OpenFile(reviewPath))
+{
+    threadId = reviewSession.Comments.Add(1, "Jordan Ellis", "JE", "Cap is too low — push for 2x fees.");
+    reviewSession.Comments.Reply(threadId, "Sam Okafor", "SO", "Finance approved 2x. Countering.");
+    reviewSession.Comments.Resolve(threadId);
+    reviewedBytes = reviewSession.Save();
+}
+File.WriteAllBytes(reviewPath, reviewedBytes);
+Step($"Wrote {Path.GetFileName(reviewPath)} — a comment, a threaded reply, and a resolved thread");
+
+var commentService = new DocumentCommentService();
+var thread = commentService.GetComments(reviewPath);
+Step($"VERIFY both the comment and its reply round-tripped: {thread.Count == 2}");
+foreach (var c in thread)
+    Step($"  [{c.Id}] {c.Author}: \"{c.Text}\" (reply-to={c.ParentId ?? "—"}, resolved={c.IsResolved})");
+Step($"VERIFY the reply is threaded under its parent: {thread.Any(c => c.ParentId == threadId)}");
+Step($"VERIFY the thread is marked resolved: {thread.Single(c => c.Id == threadId).IsResolved}");
+Step($"VERIFY the comment records the text it is anchored to: " +
+     $"{thread.Single(c => c.Id == threadId).AnchorText.Contains("capped at the fees paid")}");
+
+var extraction = new TextExtractionService();
+var clauseBlocks = extraction.ExtractBlocks(reviewPath);
+Step($"VERIFY extraction returns one block per non-empty paragraph: {clauseBlocks.Count == 4}");
+foreach (var block in clauseBlocks)
+    Step($"  {(block.HeadingLevel is { } level ? $"H{level}" : $"under \"{block.Heading}\"")}: {block.Text}");
+
+var cappedClause = clauseBlocks.Single(b => b.Text.StartsWith("Each party's"));
+Step($"VERIFY body text carries the heading it sits under, for clause-level indexing: " +
+     $"{cappedClause.Heading == "5. Limitation of Liability"}");
+
+// The case naive extraction gets wrong: InnerText would concatenate the old and new wording.
+var pendingText = extraction.ExtractText(multiAuthorPath);
+Step($"VERIFY tracked deletions are excluded from extracted text (\"$500,000\" is struck through): " +
+     $"{!pendingText.Contains("$500,000")}");
+Step($"VERIFY they can still be included deliberately: " +
+     $"{extraction.ExtractText(multiAuthorPath, new TextExtractionOptions { IncludeDeletedText = true }).Contains("$500,000")}");
 
 // ---------------------------------------------------------------------------------------------
 Section("Done");

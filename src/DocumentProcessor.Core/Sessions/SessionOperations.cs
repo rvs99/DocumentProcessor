@@ -1,5 +1,7 @@
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentProcessor.Core.Comments;
 using DocumentProcessor.Core.DocumentAssembly;
+using DocumentProcessor.Core.Extraction;
 using DocumentProcessor.Core.FontEmbedding;
 using DocumentProcessor.Core.Layout;
 using DocumentProcessor.Core.Redlining;
@@ -147,4 +149,38 @@ public sealed class FieldOperations(DocumentSession session)
     /// <inheritdoc cref="CrossReferenceValidator.Validate(string)"/>
     public IReadOnlyList<DanglingReference> ValidateCrossReferences() =>
         CrossReferenceValidator.ValidateCore(session.Document);
+}
+
+/// <summary>Comment operations bound to an open <see cref="DocumentSession"/>.</summary>
+public sealed class CommentOperations(DocumentSession session)
+{
+    /// <inheritdoc cref="DocumentCommentService.GetComments(string)"/>
+    public IReadOnlyList<DocumentComment> GetAll() => DocumentCommentService.GetCommentsCore(session.Document);
+
+    /// <inheritdoc cref="DocumentCommentService.AddComment(string, int, string, string, string)"/>
+    public string Add(int paragraphIndex, string author, string initials, string text) =>
+        DocumentCommentService.AddCommentCore(session.Document, paragraphIndex, author, initials, text);
+
+    /// <inheritdoc cref="DocumentCommentService.ReplyToComment(string, string, string, string, string)"/>
+    public string Reply(string parentCommentId, string author, string initials, string text) =>
+        DocumentCommentService.ReplyToCommentCore(session.Document, parentCommentId, author, initials, text);
+
+    /// <inheritdoc cref="DocumentCommentService.ResolveComment(string, string, bool)"/>
+    public void Resolve(string commentId, bool resolved = true) =>
+        DocumentCommentService.ResolveCommentCore(session.Document, commentId, resolved);
+
+    /// <inheritdoc cref="DocumentCommentService.DeleteComment(string, string)"/>
+    public bool Delete(string commentId) => DocumentCommentService.DeleteCommentCore(session.Document, commentId);
+}
+
+/// <summary>Text-extraction operations bound to an open <see cref="DocumentSession"/>.</summary>
+public sealed class TextOperations(DocumentSession session)
+{
+    /// <inheritdoc cref="TextExtractionService.ExtractText(string, TextExtractionOptions?)"/>
+    public string Extract(TextExtractionOptions? options = null) =>
+        TextExtractionService.ExtractTextCore(session.Document, options);
+
+    /// <inheritdoc cref="TextExtractionService.ExtractBlocks(string, TextExtractionOptions?)"/>
+    public IReadOnlyList<TextBlock> ExtractBlocks(TextExtractionOptions? options = null) =>
+        TextExtractionService.ExtractBlocksCore(session.Document, options);
 }
